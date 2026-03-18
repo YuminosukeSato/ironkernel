@@ -35,5 +35,4 @@ __all__ = [
 kernel: KernelFacade
 rt: RuntimeFacade
 
-
 def chan(capacity: int) -> Channel: ...

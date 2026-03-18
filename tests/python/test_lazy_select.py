@@ -18,14 +18,18 @@ def test_nan_in_unselected_branch_does_not_contaminate_why_dead_branch_payloads_
     right = kernel.arg("right")
     spec = kernel.elementwise(kernel.where(cond, left, right))
 
-    out = rt.go(
-        kernel.map(
-            spec,
-            cond=rt.asarray(np.array([1.0, 1.0], dtype=np.float64)),
-            left=rt.asarray(np.array([5.0, 6.0], dtype=np.float64)),
-            right=rt.asarray(np.array([np.nan, np.nan], dtype=np.float64)),
+    out = (
+        rt.go(
+            kernel.map(
+                spec,
+                cond=rt.asarray(np.array([1.0, 1.0], dtype=np.float64)),
+                left=rt.asarray(np.array([5.0, 6.0], dtype=np.float64)),
+                right=rt.asarray(np.array([np.nan, np.nan], dtype=np.float64)),
+            )
         )
-    ).result().numpy()
+        .result()
+        .numpy()
+    )
 
     np.testing.assert_array_equal(out, np.array([5.0, 6.0], dtype=np.float64))
 
@@ -36,13 +40,17 @@ def test_where_identical_branches_equals_original_why_select_should_reduce_to_id
     spec = kernel.elementwise(kernel.where(cond, x, x))
     values = np.array([3.0, -2.0, 0.0, 8.0], dtype=np.float64)
 
-    out = rt.go(
-        kernel.map(
-            spec,
-            cond=rt.asarray(np.array([1.0, 0.0, 1.0, 0.0], dtype=np.float64)),
-            x=rt.asarray(values),
+    out = (
+        rt.go(
+            kernel.map(
+                spec,
+                cond=rt.asarray(np.array([1.0, 0.0, 1.0, 0.0], dtype=np.float64)),
+                x=rt.asarray(values),
+            )
         )
-    ).result().numpy()
+        .result()
+        .numpy()
+    )
 
     np.testing.assert_array_equal(out, values)
 
@@ -56,16 +64,20 @@ def test_where_nested_why_nested_selects_must_choose_branches_independently_per_
     nested = kernel.where(c2, a, b)
     spec = kernel.elementwise(kernel.where(c1, nested, c))
 
-    out = rt.go(
-        kernel.map(
-            spec,
-            c1=rt.asarray(np.array([1.0, 1.0, 0.0], dtype=np.float64)),
-            c2=rt.asarray(np.array([1.0, 0.0, 1.0], dtype=np.float64)),
-            a=rt.asarray(np.array([10.0, 20.0, 30.0], dtype=np.float64)),
-            b=rt.asarray(np.array([100.0, 200.0, 300.0], dtype=np.float64)),
-            c=rt.asarray(np.array([7.0, 8.0, 9.0], dtype=np.float64)),
+    out = (
+        rt.go(
+            kernel.map(
+                spec,
+                c1=rt.asarray(np.array([1.0, 1.0, 0.0], dtype=np.float64)),
+                c2=rt.asarray(np.array([1.0, 0.0, 1.0], dtype=np.float64)),
+                a=rt.asarray(np.array([10.0, 20.0, 30.0], dtype=np.float64)),
+                b=rt.asarray(np.array([100.0, 200.0, 300.0], dtype=np.float64)),
+                c=rt.asarray(np.array([7.0, 8.0, 9.0], dtype=np.float64)),
+            )
         )
-    ).result().numpy()
+        .result()
+        .numpy()
+    )
 
     np.testing.assert_array_equal(out, np.array([10.0, 200.0, 9.0], dtype=np.float64))
 

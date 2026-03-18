@@ -174,7 +174,7 @@ class TestDecoratorBasic:
 
         @kernel.elementwise
         def square(x):
-            return x ** 2
+            return x**2
 
         buf = rt.asarray(np.array([2.0, 3.0, 4.0]))
         result = rt.go(kernel.map(square, x=buf)).result()

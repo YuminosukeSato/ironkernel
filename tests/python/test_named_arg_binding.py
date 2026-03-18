@@ -65,14 +65,18 @@ def test_non_alphabetical_args_bind_by_name_why_arg_resolution_should_ignore_lex
     z, a, m = kernel.args("z", "a", "m")
     spec = kernel.elementwise(z - a + m)
 
-    out = rt.go(
-        kernel.map(
-            spec,
-            m=rt.asarray(np.array([7.0, 8.0], dtype=np.float64)),
-            z=rt.asarray(np.array([10.0, 20.0], dtype=np.float64)),
-            a=rt.asarray(np.array([1.0, 2.0], dtype=np.float64)),
+    out = (
+        rt.go(
+            kernel.map(
+                spec,
+                m=rt.asarray(np.array([7.0, 8.0], dtype=np.float64)),
+                z=rt.asarray(np.array([10.0, 20.0], dtype=np.float64)),
+                a=rt.asarray(np.array([1.0, 2.0], dtype=np.float64)),
+            )
         )
-    ).result().numpy()
+        .result()
+        .numpy()
+    )
 
     np.testing.assert_array_equal(out, np.array([16.0, 26.0], dtype=np.float64))
 

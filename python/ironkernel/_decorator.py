@@ -111,11 +111,26 @@ _CMPOP_MAP: dict[type[ast.cmpop], str] = {
     ast.NotEq: "__ne__",
 }
 
-_KERNEL_METHODS = frozenset({
-    "sqrt", "abs", "log", "exp", "log2", "log10",
-    "floor", "ceil", "sin", "cos", "tan",
-    "pow", "atan2", "min", "max", "where",
-})
+_KERNEL_METHODS = frozenset(
+    {
+        "sqrt",
+        "abs",
+        "log",
+        "exp",
+        "log2",
+        "log10",
+        "floor",
+        "ceil",
+        "sin",
+        "cos",
+        "tan",
+        "pow",
+        "atan2",
+        "min",
+        "max",
+        "where",
+    }
+)
 
 
 def _lower_expr(
