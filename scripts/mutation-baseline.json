@@ -1,0 +1,6 @@
+{
+  "description": "cargo-mutants regression budget for mutation_guard tests over runtime/channel/python boundary",
+  "max_missed": 0,
+  "max_timeout": 0,
+  "min_caught": 1
+}

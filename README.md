@@ -178,7 +178,7 @@ make mutate-core
 - `coverage-python` enforces 100% statement and branch coverage for `python/ironkernel/`.
 - `coverage-rust` instruments both Rust tests and Python execution paths, then fails on any uncovered `src/` line except PyO3 `#[pymethods]` annotation lines that LLVM reports as uncovered.
 - `stress` repeats the concurrency-sensitive Rust and Python suites to catch flakes.
-- `mutate-core` compile-checks mutation candidates against `src/runtime/`, `src/channel/`, and `src/python/`.
+- `mutate-core` runs `cargo-mutants` against fast `mutation_guard` tests for the runtime, channel, and Python boundary slice, then fails on any surviving mutant or timeout.
 
 ---
 

@@ -201,7 +201,7 @@ BREAKING CHANGE: Expr::Var renamed to Expr::ArgRef
 - `make coverage-rust` instruments both `cargo test` and the Python runtime path, then fails if any `src/` line is uncovered.
 - LLVM reports PyO3 `#[pymethods]` annotation lines as uncovered even when the generated wrappers execute. The Rust coverage gate treats only those annotation lines as tool false positives.
 - `make stress` repeats the flaky-prone Rust and Python concurrency suites 200 times by default.
-- `make mutate-core` compile-checks mutation candidates for the core runtime, channel, and Python boundary modules.
+- `make mutate-core` runs `cargo-mutants` against the focused `mutation_guard` tests for the core runtime, channel, and Python boundary modules.
 
 ## Pull Requests
 

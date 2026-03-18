@@ -23,4 +23,4 @@ uv run pytest tests/python/ -q
 cargo llvm-cov report --json --summary-only --output-path coverage-rust.json
 cargo llvm-cov report --text --show-missing-lines --output-path coverage-rust.txt
 cargo llvm-cov report --cobertura --output-path coverage-rust.xml
-uv run python scripts/check_rust_coverage.py coverage-rust.json
+uv run python scripts/check_rust_coverage.py coverage-rust.txt
