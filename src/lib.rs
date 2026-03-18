@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 
 pub mod buffer;
+pub mod channel;
 pub mod error;
 pub mod ir;
 pub mod python;
@@ -18,5 +19,8 @@ fn _parsec(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<python::py_kernel::PyReduceSpec>()?;
     m.add_class::<python::py_kernel::PyKernelModule>()?;
     m.add_class::<python::py_runtime::PyRuntimeModule>()?;
+    m.add_class::<python::py_channel::PyChannel>()?;
+    m.add_class::<python::py_channel::PyRecvCase>()?;
+    m.add_function(wrap_pyfunction!(python::py_channel::py_select, m)?)?;
     Ok(())
 }

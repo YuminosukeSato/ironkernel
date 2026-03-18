@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use crate::runtime::task::{TaskHandle, TaskResult};
 
 use super::py_buffer::{asarray_from_numpy, PyBuffer};
+use super::py_channel::PyChannel;
 use super::py_kernel::{execute_map, execute_reduce, PyMapSpec, PyReduceSpec};
 use super::py_task::PyTaskHandle;
 
@@ -58,5 +59,10 @@ impl PyRuntimeModule {
                 "go() expects a MapSpec or ReduceSpec",
             ))
         }
+    }
+
+    /// Create a bounded channel.
+    fn chan(&self, capacity: usize) -> PyChannel {
+        PyChannel::new(capacity)
     }
 }
