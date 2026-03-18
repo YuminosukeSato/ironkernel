@@ -135,5 +135,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: mutation
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
       - run: cargo install cargo-mutants --locked
       - run: make mutate-core
