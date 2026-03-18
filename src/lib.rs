@@ -1,5 +1,7 @@
 use pyo3::prelude::*;
 
+pub mod error;
+
 /// parsec: A Python parallel compute library backed by a Rust execution engine.
 #[pymodule]
 fn _parsec(m: &Bound<'_, PyModule>) -> PyResult<()> {
