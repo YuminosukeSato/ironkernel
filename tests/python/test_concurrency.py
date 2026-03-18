@@ -49,10 +49,9 @@ def test_concurrent_go_out_channel() -> None:
     for _ in range(4):
         results.append(c.recv().scalar())
 
-    for task in tasks:
-        assert task.is_done()
-
+    task_results = [task.result().scalar() for task in tasks]
     assert sorted(results) == [0.0, 1.0, 2.0, 3.0]
+    assert sorted(task_results) == [0.0, 1.0, 2.0, 3.0]
 
 
 def test_result_does_not_hold_gil() -> None:

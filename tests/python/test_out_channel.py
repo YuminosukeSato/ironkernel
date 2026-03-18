@@ -22,9 +22,10 @@ class TestGoWithOutChannel:
 
         task = rt.go(map_spec, out=c)
         received = c.recv()
+        task_result = task.result()
 
         npt.assert_array_equal(received.numpy(), np.array([1.0, 2.0, 3.0]))
-        assert task.is_done()
+        npt.assert_array_equal(task_result.numpy(), np.array([1.0, 2.0, 3.0]))
 
     def test_reduce_out_channel(self):
         """Reduce result is delivered to the channel as a single-element buffer."""
@@ -34,9 +35,10 @@ class TestGoWithOutChannel:
 
         task = rt.go(reduce_spec, out=c)
         received = c.recv()
+        task_result = task.result()
 
         npt.assert_array_equal(received.numpy(), np.array([6.0]))
-        assert task.is_done()
+        npt.assert_array_equal(task_result.numpy(), np.array([6.0]))
 
     def test_channel_closed_fails_task(self):
         """Sending to a closed channel fails the task."""
@@ -58,8 +60,9 @@ class TestGoWithOutChannel:
 
         task = rt.go(map_spec, out=c)
 
-        # Recv to let delivery complete.
-        c.recv()
+        received = c.recv()
+        task_result = task.result()
+        npt.assert_array_equal(task_result.numpy(), received.numpy())
         assert task.is_done()
 
     def test_go_out_none_is_default(self):
@@ -105,9 +108,10 @@ class TestGoWithOutChannel:
 
         task = rt.go(map_spec, out=c)
         received = c.recv()
+        task_result = task.result()
 
         npt.assert_array_equal(received.numpy(), data)
-        assert task.is_done()
+        npt.assert_array_equal(task_result.numpy(), data)
 
     def test_multiple_go_out_same_channel(self):
         """Multiple go() calls can deliver to the same channel."""

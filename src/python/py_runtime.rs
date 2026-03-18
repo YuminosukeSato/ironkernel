@@ -339,4 +339,64 @@ mod tests {
             assert_eq!(result.as_scalar().unwrap(), 6.0);
         });
     }
+
+    #[test]
+    fn mutation_guard_py_runtime_go_map_why_boundary_execution_must_return_completed_buffer_task() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            use crate::buffer::inner::{Buffer, DType};
+            use crate::ir::compiler::ArgValue;
+            use crate::ir::expr::Expr;
+            use crate::ir::kernel::{ArgSpec, KernelKind, KernelSpec, TensorSpec};
+            use crate::python::py_kernel::{PyKernelSpec, PyMapSpec};
+            use std::collections::HashMap;
+
+            let spec = PyKernelSpec {
+                inner: KernelSpec {
+                    kind: KernelKind::Elementwise,
+                    args: vec![ArgSpec {
+                        name: "x".to_string(),
+                        dtype: DType::F64,
+                        is_scalar: false,
+                    }],
+                    output: TensorSpec { dtype: DType::F64 },
+                    expr: Expr::ArgRef(0),
+                },
+            };
+            let mut args = HashMap::new();
+            args.insert(
+                "x".to_string(),
+                ArgValue::Buffer(Buffer::from_f64_vec(vec![2.0, 4.0, 8.0])),
+            );
+            let task = PyRuntimeModule::new()
+                .go(
+                    py,
+                    PyMapSpec { spec, args }.into_pyobject(py).unwrap().as_any(),
+                    None,
+                )
+                .unwrap();
+            assert!(task.inner.is_done());
+            let result = task.inner.result().unwrap();
+
+            assert_eq!(result.as_buffer().unwrap().as_f64_slice(), &[2.0, 4.0, 8.0]);
+        });
+    }
+
+    #[test]
+    fn mutation_guard_py_runtime_chan_and_asarray_why_public_constructors_must_keep_data_intact() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            use numpy::PyArrayMethods;
+
+            let runtime = PyRuntimeModule::new();
+            let array = numpy::PyArray1::from_vec(py, vec![1.0, 3.0, 9.0]);
+            let buf = runtime.asarray(array.readonly());
+            let channel = runtime.chan(1);
+
+            assert_eq!(buf.inner.as_f64_slice(), &[1.0, 3.0, 9.0]);
+            channel.inner.send(buf.inner.clone()).unwrap();
+            let received = channel.inner.recv().unwrap();
+            assert_eq!(received.as_f64_slice(), &[1.0, 3.0, 9.0]);
+        });
+    }
 }

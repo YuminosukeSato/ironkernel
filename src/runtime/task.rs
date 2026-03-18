@@ -447,4 +447,38 @@ mod tests {
         handle.set_delivering(); // no-op: not DeliveryQueued
         assert_eq!(handle.state(), TaskState::RunningCompute);
     }
+
+    #[test]
+    fn mutation_guard_task_delivery_completion_why_terminal_visibility_must_follow_staged_result() {
+        let handle = TaskHandle::new();
+        let expected = Buffer::from_f64_vec(vec![3.0, 5.0, 8.0]);
+
+        handle.set_running_compute();
+        handle.set_delivery_queued(TaskResult::Buffer(expected.clone()));
+        assert!(!handle.is_done());
+        handle.set_delivering();
+        assert!(!handle.is_done());
+        handle.complete_delivery();
+
+        let result = handle.result().unwrap();
+        assert!(handle.is_done());
+        assert_eq!(
+            result.as_buffer().unwrap().as_f64_slice(),
+            expected.as_f64_slice()
+        );
+        assert!(!handle.cancel());
+    }
+
+    #[test]
+    fn mutation_guard_task_cancel_why_waiters_must_observe_cancelled_and_late_cancel_must_fail() {
+        let handle = TaskHandle::new();
+
+        handle.set_running_compute();
+        assert!(handle.cancel());
+
+        let err = handle.result().unwrap_err();
+        assert_eq!(err, ParsecError::Cancelled);
+        assert!(handle.is_done());
+        assert!(!handle.cancel());
+    }
 }

@@ -137,4 +137,19 @@ mod tests {
             Err(crate::error::ParsecError::ChannelClosed)
         ));
     }
+
+    #[test]
+    fn mutation_guard_select_ready_channel_why_default_path_must_not_hide_available_data() {
+        let ch_a = Channel::new(1);
+        let ch_b = Channel::new(1);
+        ch_b.send(Buffer::from_f64_vec(vec![144.0])).unwrap();
+
+        let (idx, buf) = select_channels(&[&ch_a, &ch_b], true)
+            .unwrap()
+            .into_received()
+            .expect("ready channel should beat default");
+
+        assert_eq!(idx, 1);
+        assert_eq!(buf.as_f64_slice(), &[144.0]);
+    }
 }

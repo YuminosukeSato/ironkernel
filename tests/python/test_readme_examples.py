@@ -100,5 +100,6 @@ def test_example7_channel_handoff() -> None:
     c = chan(10)
     task = rt.go(kernel.map(double, x=buf), out=c)
     result = c.recv()
-    assert task.is_done()
+    task_result = task.result()
+    npt.assert_array_equal(task_result.numpy(), result.numpy())
     npt.assert_array_equal(result.numpy()[:5], np.array([0.0, 2.0, 4.0, 6.0, 8.0]))

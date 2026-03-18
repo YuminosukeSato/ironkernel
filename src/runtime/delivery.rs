@@ -218,4 +218,36 @@ mod tests {
         let received = ch.recv().unwrap();
         assert_eq!(received.as_f64_slice(), &[99.5]);
     }
+
+    #[test]
+    fn mutation_guard_delivery_submit_why_worker_sender_must_forward_payload_and_complete_task() {
+        let ch = Channel::new(1);
+        let task = TaskHandle::new();
+        let buf = Buffer::from_f64_vec(vec![13.0, 21.0]);
+
+        task.set_running_compute();
+        task.set_delivery_queued(TaskResult::Buffer(buf.clone()));
+        submit_delivery(DeliveryJob {
+            task: task.clone(),
+            channel: ch.clone(),
+            buffer: buf,
+        });
+
+        for _ in 0..50 {
+            if task.is_done() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(task.is_done());
+        let received = ch
+            .try_recv()
+            .unwrap()
+            .expect("delivery should enqueue buffer");
+        let result = task.result().unwrap();
+
+        assert_eq!(received.as_f64_slice(), &[13.0, 21.0]);
+        assert_eq!(result.as_buffer().unwrap().as_f64_slice(), &[13.0, 21.0]);
+    }
 }
