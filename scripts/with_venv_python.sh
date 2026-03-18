@@ -11,24 +11,13 @@ if [[ ! -x "${VENV_PYTHON}" ]]; then
   exit 1
 fi
 
-SITE_PACKAGES="$("${VENV_PYTHON}" - <<'PY'
-import os
-import sysconfig
-
-paths = []
-for key in ("purelib", "platlib"):
-    path = sysconfig.get_path(key)
-    if path and path not in paths:
-        paths.append(path)
-
-print(os.pathsep.join(paths))
-PY
-)"
-
 export VIRTUAL_ENV="${VENV_DIR}"
 export PATH="${VENV_BIN}${PATH:+:${PATH}}"
 export PYO3_PYTHON="${VENV_PYTHON}"
 export PYTHON_SYS_EXECUTABLE="${VENV_PYTHON}"
-export PYTHONPATH="${SITE_PACKAGES}"
+
+# Do NOT set PYTHONPATH — the venv python already knows its own site-packages.
+# Setting PYTHONPATH can cause numpy source-directory import errors on CI.
+unset PYTHONPATH
 
 exec "$@"
