@@ -26,17 +26,97 @@ chan / select                     bounded channel handoff
 
 ## Install
 
+### pip install (Recommended)
+
+Install into the Python environment you will run the code with using `python -m pip`.
+Python 3.9+ and NumPy 1.24+ are required.
+
 ```bash
-pip install ironkernel
+python -m pip install --upgrade pip
+python -m pip install ironkernel
 ```
 
-Build from source:
+Verify the installation:
+
+```bash
+python -m pip show ironkernel
+python -c "import ironkernel; print('ironkernel', ironkernel.__version__)"
+```
+
+The `ironkernel._ironkernel` extension installs as a prebuilt wheel whenever a compatible
+OS/Python combination exists. On systems without a matching wheel, pip falls back to source
+build, which requires a working Rust toolchain (typically for development environments).
+
+Common issues:
+
+- `No module named 'numpy'`
+  - Run: `python -m pip install numpy`
+- `ModuleNotFoundError: No module named 'ironkernel._ironkernel'`
+  - Usually caused by installing into a different interpreter. Use `python -m pip` from the same
+    interpreter you run your script with.
+- Reinstalling a previous package version
+  - `python -m pip uninstall -y ironkernel && python -m pip install --force-reinstall ironkernel`
+
+### Local development from source
 
 ```bash
 git clone https://github.com/YuminosukeSato/ironkernel.git
 cd ironkernel
 uv sync --frozen --dev
 uv run maturin develop
+```
+
+Source builds require `uv` and a Rust toolchain. For normal usage, the PyPI `pip install` path
+is usually enough.
+
+### Minimal usage with Python
+
+```python
+import numpy as np
+from ironkernel import kernel, rt
+
+# 1) Prepare input buffers
+a = rt.asarray(np.array([1.0, 2.0, 3.0], dtype=np.float64))
+b = rt.asarray(np.array([10.0, 20.0, 30.0], dtype=np.float64))
+
+# 2) Define computation with the DSL
+@kernel.elementwise
+def add(x, y):
+    return x + y
+
+# 3) Convert to execution spec
+spec = kernel.map(add, x=a, y=b)
+
+# 4) Execute (GIL is released inside Rust runtime)
+task = rt.go(spec)
+out = task.result()        # Blocks until task completion
+arr = out.numpy()
+print(arr)                 # [11. 22. 33.]
+
+# Get scalar result when buffer has one element
+print(task.result().scalar())  # Example: single-element buffer
+```
+
+### Asynchronous pipeline with channels
+
+```python
+import numpy as np
+from ironkernel import chan, kernel, rt
+
+@kernel.elementwise
+def double(x):
+    return x * 2.0
+
+src = rt.asarray(np.arange(6, dtype=np.float64))
+out_ch = chan(4)
+task = rt.go(kernel.map(double, x=src), out=out_ch)
+
+# Receive from channel in consumer code (blocking)
+buf = out_ch.recv()
+print(buf.numpy()[:3])     # [0., 2., 4.]
+
+# If you need explicit task completion state, call task.result()
+task.result()
 ```
 
 ---

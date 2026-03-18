@@ -233,6 +233,15 @@ mod tests {
             buffer: buf,
         });
 
+        let start = std::time::Instant::now();
+        while !task.is_done() {
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "delivery task should complete within timeout"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
         let result = task.result().unwrap();
 
         assert!(task.is_done());

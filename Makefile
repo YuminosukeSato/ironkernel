@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 STRESS_ITERATIONS ?= 200
+RUST_TEST_THREADS ?= 1
 
 .PHONY: all sync lint lint-rust lint-python fmt fmt-rust fmt-python \
 	test test-rust test-python typecheck build dev dev-frozen \
@@ -33,7 +34,7 @@ fmt-python:
 test: test-rust test-python
 
 test-rust: sync
-	bash scripts/with_venv_python.sh cargo test --locked --workspace
+	bash scripts/with_venv_python.sh cargo test --locked --workspace -- --test-threads=$(RUST_TEST_THREADS)
 
 test-python: dev-frozen
 	uv run pytest tests/python/ -v
@@ -61,7 +62,7 @@ coverage-rust: sync
 stress: dev-frozen
 	bash scripts/stress.sh $(STRESS_ITERATIONS)
 
-mutate-core:
+mutate-core: sync
 	bash scripts/run_mutants.sh
 
 verify-all: lint test typecheck coverage-python coverage-rust

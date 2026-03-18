@@ -17,7 +17,8 @@ export PYTHON_SYS_EXECUTABLE="${VENV_PYTHON}"
 eval "$(cargo llvm-cov show-env --sh)"
 
 cargo llvm-cov clean --workspace
-bash scripts/with_venv_python.sh cargo test --locked --workspace
+RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
+bash scripts/with_venv_python.sh cargo test --locked --workspace -- --test-threads="${RUST_TEST_THREADS}"
 uv run maturin develop
 uv run pytest tests/python/ -q
 cargo llvm-cov report --json --summary-only --output-path coverage-rust.json
