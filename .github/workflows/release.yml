@@ -17,14 +17,22 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
-          - os: ubuntu-latest
-            target: aarch64
+            manylinux: "2014"
+            maturin-args: >-
+              --release --locked --compatibility pypi --out dist
+              -i python3.9 python3.10 python3.11 python3.12 python3.13
           - os: macos-13
             target: x86_64
+            manylinux: "off"
+            maturin-args: --release --locked --out dist
           - os: macos-latest
             target: aarch64
+            manylinux: "off"
+            maturin-args: --release --locked --out dist
           - os: windows-latest
             target: x64
+            manylinux: "off"
+            maturin-args: --release --locked --out dist
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -34,8 +42,8 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist
-          manylinux: auto
+          args: ${{ matrix.maturin-args }}
+          manylinux: ${{ matrix.manylinux }}
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}

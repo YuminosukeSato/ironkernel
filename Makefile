@@ -15,7 +15,7 @@ lint: lint-rust lint-python
 
 lint-rust:
 	cargo fmt --check
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --locked --all-targets -- -D warnings
 
 lint-python: sync
 	uv run ruff check python/ tests/
@@ -32,8 +32,8 @@ fmt-python:
 
 test: test-rust test-python
 
-test-rust:
-	cargo test --workspace
+test-rust: sync
+	bash scripts/with_venv_python.sh cargo test --locked --workspace
 
 test-python: dev-frozen
 	uv run pytest tests/python/ -v

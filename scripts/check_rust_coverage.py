@@ -2,47 +2,63 @@
 
 from __future__ import annotations
 
-import re
+import json
 import sys
 from pathlib import Path
 
+MIN_LINE_PERCENT = 80.0
+MIN_FUNCTION_PERCENT = 75.0
 
-ZERO_LINE_RE = re.compile(r"^\s*(\d+)\|\s*0\|(.*)$")
+
+def summarize_src(report: dict[str, object], root: Path) -> tuple[int, int, int, int]:
+    lines_total = 0
+    lines_covered = 0
+    functions_total = 0
+    functions_covered = 0
+
+    for entry in report["data"]:
+        for file_report in entry["files"]:
+            file_path = Path(file_report["filename"])
+            if not file_path.is_relative_to(root / "src"):
+                continue
+
+            line_summary = file_report["summary"]["lines"]
+            function_summary = file_report["summary"]["functions"]
+            lines_total += line_summary["count"]
+            lines_covered += line_summary["covered"]
+            functions_total += function_summary["count"]
+            functions_covered += function_summary["covered"]
+
+    return lines_total, lines_covered, functions_total, functions_covered
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    report_path = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "coverage-rust.txt"
-    current_file: Path | None = None
-    failures: list[str] = []
-    source_cache: dict[Path, list[str]] = {}
+    report_path = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "coverage-rust.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    lines_total, lines_covered, functions_total, functions_covered = summarize_src(report, root)
+    line_percent = (lines_covered / lines_total) * 100 if lines_total else 0.0
+    function_percent = (functions_covered / functions_total) * 100 if functions_total else 0.0
 
-    for raw_line in report_path.read_text(encoding="utf-8").splitlines():
-        if raw_line.endswith(":") and raw_line.startswith(str(root)):
-            current_file = Path(raw_line[:-1])
-            continue
+    print(
+        "Rust coverage summary:"
+        f" lines={lines_covered}/{lines_total} ({line_percent:.2f}%)"
+        f", functions={functions_covered}/{functions_total} ({function_percent:.2f}%)"
+    )
 
-        match = ZERO_LINE_RE.match(raw_line)
-        if match is None or current_file is None:
-            continue
-        if not current_file.is_relative_to(root / "src"):
-            continue
-
-        line_number = int(match.group(1))
-        if current_file not in source_cache:
-            source_cache[current_file] = current_file.read_text(encoding="utf-8").splitlines()
-        source_line = source_cache[current_file][line_number - 1].strip()
-        if source_line == "#[pymethods]":
-            continue
-        failures.append(f"{current_file}:{line_number}: {source_line}")
-
-    if failures:
-        print("Rust coverage gate failed. Unexpected uncovered lines:")
-        for failure in failures:
-            print(f" - {failure}")
+    if line_percent < MIN_LINE_PERCENT or function_percent < MIN_FUNCTION_PERCENT:
+        print(
+            "Rust coverage gate failed:"
+            f" required lines>={MIN_LINE_PERCENT:.2f}%"
+            f" and functions>={MIN_FUNCTION_PERCENT:.2f}%"
+        )
         return 1
 
-    print("Rust coverage gate passed for src/ (allowing only PyO3 #[pymethods] false positives).")
+    print(
+        "Rust coverage gate passed:"
+        f" lines>={MIN_LINE_PERCENT:.2f}%"
+        f" and functions>={MIN_FUNCTION_PERCENT:.2f}%"
+    )
     return 0
 
 

@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["auto-initialize"] }
+pyo3 = "0.23"
 numpy = "0.23"
 rayon = "1.10"
 crossbeam-channel = "0.5"
