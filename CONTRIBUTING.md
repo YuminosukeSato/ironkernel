@@ -1,6 +1,6 @@
-# Contributing to parsec
+# Contributing to ironkernel
 
-Thank you for your interest in contributing to parsec.
+Thank you for your interest in contributing to ironkernel.
 
 ## Getting Started
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing to parsec.
 ### Setup
 
 ```bash
-git clone https://github.com/your-org/parsec.git
-cd parsec
+git clone https://github.com/YuminosukeSato/ironkernel.git
+cd ironkernel
 uv sync
 uv run maturin develop
 ```
@@ -27,7 +27,7 @@ cargo test && uv run maturin develop && uv run pytest tests/python/ -v
 
 ## Architecture Rules
 
-parsec uses a strict two-layer architecture. Understanding these rules is essential before contributing.
+ironkernel uses a strict two-layer architecture. Understanding these rules is essential before contributing.
 
 ### Layer separation
 
@@ -37,7 +37,7 @@ src/buffer/      Pure Rust. Buffer storage, DType.
 src/runtime/     Pure Rust. Rayon pool, task handles.
 src/channel/     Pure Rust. Bounded channels, select.
 src/python/      PyO3 bindings. The ONLY place that imports pyo3.
-python/parsec/   Python re-exports. No logic here.
+python/ironkernel/   Python re-exports. No logic here.
 ```
 
 - `ir/`, `buffer/`, `runtime/`, `channel/` must NEVER import `pyo3` or `numpy` crates.
@@ -103,10 +103,10 @@ Register in `src/lib.rs`:
 m.add_class::<python::py_your_module::PyYourType>()?;
 ```
 
-#### 3. Python re-export (python/parsec/__init__.py)
+#### 3. Python re-export (python/ironkernel/__init__.py)
 
 ```python
-from parsec._parsec import YourType
+from ironkernel._ironkernel import YourType
 ```
 
 #### 4. Python test (tests/python/)
@@ -132,7 +132,7 @@ cargo test
 uv run maturin develop
 uv run pytest tests/python/ -v
 uv run ruff check python/ tests/
-uv run mypy python/parsec/ --strict
+uv run mypy python/ironkernel/ --strict
 ```
 
 ## Commit Convention
@@ -205,7 +205,7 @@ BREAKING CHANGE: Expr::Var renamed to Expr::ArgRef
 
 - [ ] All tests pass (`cargo test && pytest tests/python/ -v`)
 - [ ] Lint clean (`cargo clippy -- -D warnings && cargo fmt --check`)
-- [ ] Python lint clean (`ruff check python/ tests/ && mypy python/parsec/ --strict`)
+- [ ] Python lint clean (`ruff check python/ tests/ && mypy python/ironkernel/ --strict`)
 - [ ] No `pyo3` imports outside `src/python/`
 - [ ] GIL released during Rust computation
 - [ ] `unsafe` blocks have `SAFETY` comments
@@ -224,7 +224,7 @@ feat(buffer): add f16 dtype support
 
 When reporting a bug, please include:
 
-- parsec version (`uv run python -c "import parsec; print(parsec.__version__)"`)
+- ironkernel version (`uv run python -c "import ironkernel; print(ironkernel.__version__)"`)
 - Python version (`uv run python --version`)
 - Rust version (`rustc --version`)
 - OS and architecture

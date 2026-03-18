@@ -13,6 +13,16 @@ pub enum SelectResult {
     Default,
 }
 
+impl SelectResult {
+    #[cfg(test)]
+    fn into_received(self) -> Option<(usize, Buffer)> {
+        match self {
+            Self::Received(idx, buf) => Some((idx, buf)),
+            Self::Default => None,
+        }
+    }
+}
+
 /// Perform a non-blocking select across multiple channels.
 /// If `has_default` is true, returns Default when no channel is ready.
 /// Otherwise blocks until one channel is ready.
@@ -59,7 +69,7 @@ mod tests {
         let ch_a = Channel::new(10);
         let ch_b = Channel::new(10);
         let result = select_channels(&[&ch_a, &ch_b], true).unwrap();
-        assert!(matches!(result, SelectResult::Default));
+        assert!(result.into_received().is_none());
     }
 
     #[test]
@@ -68,13 +78,11 @@ mod tests {
         let ch_b = Channel::new(10);
         ch_a.send(Buffer::from_f64_vec(vec![42.0])).unwrap();
         let result = select_channels(&[&ch_a, &ch_b], true).unwrap();
-        match result {
-            SelectResult::Received(idx, buf) => {
-                assert_eq!(idx, 0);
-                assert_eq!(buf.as_f64_slice(), &[42.0]);
-            }
-            SelectResult::Default => panic!("expected Received"),
-        }
+        let (idx, buf) = result
+            .into_received()
+            .expect("expected ready receive result");
+        assert_eq!(idx, 0);
+        assert_eq!(buf.as_f64_slice(), &[42.0]);
     }
 
     #[test]
@@ -83,13 +91,11 @@ mod tests {
         let ch_b = Channel::new(10);
         ch_b.send(Buffer::from_f64_vec(vec![99.0])).unwrap();
         let result = select_channels(&[&ch_a, &ch_b], true).unwrap();
-        match result {
-            SelectResult::Received(idx, buf) => {
-                assert_eq!(idx, 1);
-                assert_eq!(buf.as_f64_slice(), &[99.0]);
-            }
-            SelectResult::Default => panic!("expected Received"),
-        }
+        let (idx, buf) = result
+            .into_received()
+            .expect("expected ready receive result");
+        assert_eq!(idx, 1);
+        assert_eq!(buf.as_f64_slice(), &[99.0]);
     }
 
     #[test]
@@ -103,12 +109,32 @@ mod tests {
         });
 
         let result = select_channels(&[&ch_a], false).unwrap();
-        match result {
-            SelectResult::Received(idx, buf) => {
-                assert_eq!(idx, 0);
-                assert_eq!(buf.as_f64_slice(), &[7.0]);
-            }
-            SelectResult::Default => panic!("expected Received"),
-        }
+        let (idx, buf) = result
+            .into_received()
+            .expect("expected blocking receive result");
+        assert_eq!(idx, 0);
+        assert_eq!(buf.as_f64_slice(), &[7.0]);
+    }
+
+    #[test]
+    fn select_reports_closed_channel_why_internal_close_propagation_must_not_hide_failures() {
+        let ch_a = Channel::new(1);
+        ch_a.sender().send(Msg::Closed).unwrap();
+
+        assert!(matches!(
+            select_channels(&[&ch_a], true),
+            Err(crate::error::ParsecError::ChannelClosed)
+        ));
+    }
+
+    #[test]
+    fn select_blocking_closed_msg() {
+        let ch_a = Channel::new(1);
+        ch_a.sender().send(Msg::Closed).unwrap();
+
+        assert!(matches!(
+            select_channels(&[&ch_a], false),
+            Err(crate::error::ParsecError::ChannelClosed)
+        ));
     }
 }

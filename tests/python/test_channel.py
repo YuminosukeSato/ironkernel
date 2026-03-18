@@ -1,7 +1,7 @@
 """Tests for channel and select."""
 
 import numpy as np
-from parsec import RecvCase, rt, select
+from ironkernel import RecvCase, rt, select
 
 
 class TestChannel:

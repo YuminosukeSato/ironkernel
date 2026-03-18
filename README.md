@@ -1,176 +1,267 @@
-# parsec
+# ironkernel
 
-A Python parallel compute library backed by a Rust execution engine.
+### Python Expressibility, Rust Performance
+
+[![CI](https://github.com/YuminosukeSato/ironkernel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/YuminosukeSato/ironkernel/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/ironkernel)](https://pypi.org/project/ironkernel/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](https://pypi.org/project/ironkernel/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/YuminosukeSato/ironkernel/blob/main/LICENSE)
 
 Write NumPy-like expressions in Python. Execute them in parallel on Rust, outside the GIL.
 
-## Why parsec?
+Rayon uses all CPU cores automatically. Go-style channels and select enable concurrent pipelines.
 
-Python numeric libraries face a fundamental tension: Python is great for expressing computations, but the GIL prevents true parallelism. parsec resolves this with a two-layer architecture:
+![Architecture](assets/architecture.jpg)
 
-- Python layer: a DSL that builds expression trees using standard operators (`+`, `*`, `>`, etc.)
-- Rust layer: a parallel execution engine that evaluates those trees across all CPU cores via rayon
-
-The key difference from other approaches:
-
-| | parsec | NumPy | Numba | JAX |
-|---|---|---|---|---|
-| GIL during compute | Released | Held (mostly) | Released (nopython) | Released |
-| Parallelism | Automatic (rayon) | Limited BLAS | Manual parallel | XLA compiler |
-| Expression building | Python operators | Eager | JIT decorator | Tracing |
-| Channel/select | Built-in | No | No | No |
-| Dependencies | Rust + maturin | C/Fortran | LLVM | XLA/CUDA |
-
-parsec is not a replacement for NumPy or JAX. It targets a specific niche: CPU-bound elementwise/reduce workloads that benefit from automatic parallelism and Go-style concurrency, with zero GIL contention.
-
-## Quick Start
-
-### Requirements
-
-- Python 3.9+
-- Rust 1.70+ (for building from source)
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
-
-### Install
-
-```bash
-git clone https://github.com/your-org/parsec.git
-cd parsec
-uv sync
-uv run maturin develop
+```text
+Python DSL                        Rust engine
+------------------------------    ---------------------------------
+kernel.arg / @kernel.elementwise  build IR / KernelSpec / MapSpec
+rt.go(...)                        release GIL and execute in rayon
+task.result()                     return Buffer / scalar result
+chan / select                     bounded channel handoff
 ```
 
-Verify the installation:
+---
+
+## Install
 
 ```bash
-uv run python -c "import parsec; print(parsec.__version__)"
+pip install ironkernel
 ```
 
-### Your First Kernel (30 seconds)
+Build from source:
+
+```bash
+git clone https://github.com/YuminosukeSato/ironkernel.git
+cd ironkernel
+uv sync && uv run maturin develop
+```
+
+---
+
+## Examples
+
+### 1. SAXPY — Decorator Syntax
+
+Write a plain function. The decorator turns it into a parallel kernel.
 
 ```python
 import numpy as np
-from parsec import kernel, rt
+from ironkernel import kernel, rt
 
-# 1. Define expressions using Python operators
-a, x, y = kernel.args("a", "x", "y")
-saxpy = kernel.elementwise(a * x + y)
+@kernel.elementwise
+def saxpy(a, x, y):
+    return a * x + y
 
-# 2. Create buffers from NumPy arrays
 bx = rt.asarray(np.arange(1_000_000, dtype=np.float64))
 by = rt.asarray(np.ones(1_000_000, dtype=np.float64))
 
-# 3. Launch computation (runs in parallel on Rust, GIL released)
-task = rt.go(kernel.map(saxpy, a=2.0, x=bx, y=by))
-
-# 4. Get result as NumPy array
-result = task.result().numpy()
-print(result[:5])  # [1. 3. 5. 7. 9.]
+result = rt.go(kernel.map(saxpy, a=2.0, x=bx, y=by)).result().numpy()
+# result[0]=1.0, result[1]=3.0, result[2]=5.0, ...
 ```
 
-## Core Concepts
-
-### Expression Tree IR
-
-Python operators build an intermediate representation (IR) tree. No computation happens until `rt.go()` is called.
+### 2. Math Functions
 
 ```python
-x = kernel.arg("x")
+import numpy as np
+from ironkernel import kernel, rt
 
-# These build IR nodes, not compute results
-expr = kernel.sqrt(kernel.abs(x)) + kernel.sin(x)
-spec = kernel.elementwise(expr)
+@kernel.elementwise
+def transform(x):
+    return kernel.sqrt(kernel.abs(x)) + kernel.sin(x)
+
+buf = rt.asarray(np.arange(1_000_000, dtype=np.float64))
+out = rt.go(kernel.map(transform, x=buf)).result().numpy()
 ```
 
-Available operations:
-- Arithmetic: `+`, `-`, `*`, `/`, `**` (and reverse: `2.0 * x`)
-- Unary math: `sqrt`, `abs`, `log`, `exp`, `log2`, `log10`, `sin`, `cos`, `tan`, `floor`, `ceil`, `round`
-- Binary math: `pow`, `atan2`, `min`, `max`
-- Comparison: `>`, `>=`, `<`, `<=`, `==`, `!=`
-- Conditional: `kernel.where_(cond, true_val, false_val)`
+### 3. Manual Expression Tree
+
+Build expression trees with Python operators instead of the decorator.
+
+```python
+import numpy as np
+from ironkernel import kernel, rt
+
+x, y = kernel.args("x", "y")
+spec = kernel.elementwise(x + y)
+
+left = rt.asarray(np.array([1.0, 2.0, 3.0]))
+right = rt.asarray(np.array([10.0, 20.0, 30.0]))
+
+result = rt.go(kernel.map(spec, x=left, y=right)).result().numpy()
+print(result)  # [11. 22. 33.]
+```
+
+### 4. Reductions
+
+```python
+import numpy as np
+from ironkernel import kernel, rt
+
+buf = rt.asarray(np.arange(100, dtype=np.float64))
+
+total = rt.go(kernel.sum(buf)).result().scalar()       # 4950.0
+avg   = rt.go(kernel.mean(buf)).result().scalar()       # 49.5
+lo    = rt.go(kernel.min_reduce(buf)).result().scalar()  # 0.0
+hi    = rt.go(kernel.max_reduce(buf)).result().scalar()  # 99.0
+```
+
+### 5. ReLU — Lazy Conditional
+
+`kernel.where` only evaluates the selected branch per element.
+
+```python
+import numpy as np
+from ironkernel import kernel, rt
+
+@kernel.elementwise
+def relu(x):
+    return kernel.where(x > 0, x, 0)
+
+buf = rt.asarray(np.arange(100, dtype=np.float64) - 50)
+out = rt.go(kernel.map(relu, x=buf)).result().numpy()
+# negative values → 0, positive values → unchanged
+```
+
+### 6. Channels and Select
+
+Go-style bounded channels for concurrent task communication.
+
+```python
+import numpy as np
+from ironkernel import RecvCase, chan, kernel, rt, select
+
+ch_a = chan(10)
+ch_b = chan(10)
+
+ch_a.send(rt.asarray(np.array([42.0])))
+
+idx, val = select(RecvCase(ch_a), RecvCase(ch_b), default=True)
+# idx=0, val.scalar()=42.0
+```
+
+### 7. Channel Handoff (`out=channel`)
+
+Send computation results directly to a channel. Build producer-consumer pipelines.
+
+```python
+import numpy as np
+from ironkernel import chan, kernel, rt
+
+@kernel.elementwise
+def double(x):
+    return x * 2.0
+
+buf = rt.asarray(np.arange(1_000_000, dtype=np.float64))
+
+c = chan(10)
+task = rt.go(kernel.map(double, x=buf), out=c)
+result = c.recv()   # blocks until delivery completes
+assert task.is_done()
+print(result.numpy()[:5])  # [0. 2. 4. 6. 8.]
+```
+
+---
+
+## API Reference
+
+### Expression Building
+
+| API | Description |
+|-----|-------------|
+| `kernel.arg("x")` | Create a named placeholder |
+| `kernel.args("x", "y", ...)` | Create multiple placeholders |
+| `kernel.elementwise(expr_or_fn)` | Build `KernelSpec` from expression or function |
+| `kernel.where(cond, true_val, false_val)` | Conditional (lazy: only selected branch evaluated) |
+
+Arithmetic: `+`, `-`, `*`, `/`, `**` (reverse ops like `2.0 * x` supported)
+Comparison: `>`, `>=`, `<`, `<=`, `==`, `!=`
+Math: `sqrt`, `abs`, `log`, `exp`, `log2`, `log10`, `sin`, `cos`, `tan`, `floor`, `ceil`, `pow`, `atan2`, `min`, `max`
+
+### Execution
+
+| API | Description |
+|-----|-------------|
+| `rt.asarray(np_array)` | Create `Buffer` from NumPy array |
+| `kernel.map(spec, **kwargs)` | Bind arguments to create `MapSpec` |
+| `rt.go(spec)` | Launch computation, return `TaskHandle` |
+| `rt.go(spec, out=channel)` | Launch and deliver result to channel |
+
+### Results
+
+| API | Description |
+|-----|-------------|
+| `task.result()` | Block until done, return `Buffer` |
+| `buffer.numpy()` | Convert to NumPy ndarray |
+| `buffer.scalar()` | Extract scalar f64 |
+| `task.is_done()` | Check completion |
+| `task.cancel()` | Cancel task |
 
 ### Reductions
 
-```python
-buf = rt.asarray(np.arange(100, dtype=np.float64))
+| API | Description |
+|-----|-------------|
+| `kernel.sum(buf)` | Sum all elements |
+| `kernel.mean(buf)` | Arithmetic mean |
+| `kernel.min_reduce(buf)` | Minimum value |
+| `kernel.max_reduce(buf)` | Maximum value |
 
-total = rt.go(kernel.sum(buf)).result().scalar()      # 4950.0
-avg   = rt.go(kernel.mean(buf)).result().scalar()      # 49.5
-```
+### Channels
 
-### Channels and Select (Go-style concurrency)
+| API | Description |
+|-----|-------------|
+| `chan(capacity)` | Create bounded channel |
+| `channel.send(buf)` | Send buffer (blocks if full) |
+| `channel.recv()` | Receive buffer (blocks if empty) |
+| `channel.close()` | Close channel |
+| `select(RecvCase(ch), ..., default=True)` | Non-blocking receive from multiple channels |
 
-parsec provides bounded channels for passing buffers between concurrent tasks, with a `select` function for multiplexing.
+### Decorator Constraints
 
-```python
-from parsec import RecvCase, rt, select
+`@kernel.elementwise` supported constructs:
 
-# Create bounded channels
-ch_a = rt.chan(10)
-ch_b = rt.chan(10)
+- Arithmetic, comparison, power
+- Unary minus `-x`
+- `abs()`, `math.sqrt()`, `math.sin()`, etc.
+- `kernel.where()`, `kernel.sqrt()`, etc.
+- Constants (`int`, `float`)
 
-# Send data
-ch_a.send(rt.asarray(np.array([42.0])))
+Unsupported (raises `SyntaxError`):
 
-# Select across multiple channels (non-blocking with default=True)
-idx, val = select(RecvCase(ch_a), RecvCase(ch_b), default=True)
-# idx=0, val contains [42.0]
-```
+- if/else, for/while, assignments
+- `*args` / `**kwargs` / default arguments
+- `and` / `or` / `not`
+- Closure variables
+
+---
 
 ## Architecture
 
-```
-Python (DSL)              Rust (Engine)
-─────────────             ─────────────
-kernel.arg("x")     →     Expr::ArgRef(0)
-x + y               →     Expr::Binary(Add, ...)
-kernel.elementwise() →    KernelSpec { kind, expr, args }
-rt.go(map_spec)      →    rayon parallel eval (GIL released)
-                     →    Buffer (Arc<BufferInner>)
-task.result()        ←
-.numpy()             ←    zero-copy to ndarray
+```text
+python/ironkernel/    Public Python API, facades, type stubs
+src/python/           PyO3 boundary (only place that imports pyo3)
+src/ir/               Expression tree, compiler, evaluator, compile cache
+src/buffer/           Buffer storage with Arc-based sharing
+src/runtime/          Task lifecycle, delivery executor
+src/channel/          Bounded channels, select multiplexing
 ```
 
-Modules:
-- `ir/` — Expression tree, kernel specs, interpreter/compiler
-- `buffer/` — Typed buffer storage with Arc-based sharing
-- `runtime/` — Rayon thread pool, task handles
-- `channel/` — Bounded channels, select multiplexing
-- `python/` — PyO3 bindings (the only module that touches pyo3)
+---
 
 ## Development
 
-### Build
-
 ```bash
-uv run maturin develop          # debug build
-uv run maturin develop --release  # optimized build
-```
+# Build
+uv run maturin develop            # debug
+uv run maturin develop --release  # optimized
 
-### Test
-
-```bash
-# Rust tests (110 tests)
-cargo test
-
-# Python tests (20 tests)
-uv run maturin develop
-uv run pytest tests/python/ -v
-
-# All
+# Test
 cargo test && uv run maturin develop && uv run pytest tests/python/ -v
-```
 
-### Lint
-
-```bash
-# Rust
-cargo clippy -- -D warnings
-cargo fmt --check
-
-# Python
-uv run ruff check python/ tests/
-uv run mypy python/parsec/ --strict
+# Lint
+cargo clippy --all-targets -- -D warnings && cargo fmt --check
+uv run ruff check python/ tests/ && uv run mypy python/ironkernel/ --strict
 ```
 
 ## License

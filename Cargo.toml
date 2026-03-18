@@ -1,23 +1,35 @@
 [package]
-name = "parsec"
-version = "0.1.0"
+name = "ironkernel"
+version = "1.0.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.74"
 description = "A Python parallel compute library backed by a Rust execution engine"
 license = "MIT"
 
 [lib]
-name = "_parsec"
+name = "_ironkernel"
 crate-type = ["cdylib"]
 
+[features]
+extension-module = ["pyo3/extension-module"]
+
 [dependencies]
-pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3 = { version = "0.23", features = ["auto-initialize"] }
 numpy = "0.23"
 rayon = "1.10"
 crossbeam-channel = "0.5"
 
 [dev-dependencies]
 proptest = "1.5"
+
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+doc_markdown = "warn"
+manual_let_else = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+needless_pass_by_value = "allow"
 
 [profile.release]
 lto = true

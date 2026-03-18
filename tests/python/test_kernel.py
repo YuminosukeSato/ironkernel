@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 import pytest
-from parsec import kernel, rt
+from ironkernel import kernel, rt
 
 
 class TestArgs:
@@ -102,7 +102,7 @@ class TestMathFunctions:
 class TestWhere:
     def test_relu(self) -> None:
         x = kernel.arg("x")
-        relu = kernel.elementwise(kernel.where_(x > 0, x, 0))
+        relu = kernel.elementwise(kernel.where(x > 0, x, 0))
         data = rt.asarray(np.array([-2.0, -1.0, 0.0, 1.0, 2.0]))
         out = rt.go(kernel.map(relu, x=data)).result().numpy()
         np.testing.assert_array_equal(out, [0.0, 0.0, 0.0, 1.0, 2.0])
@@ -121,5 +121,5 @@ class TestReduce:
 
     def test_empty_sum_raises(self) -> None:
         buf = rt.asarray(np.array([], dtype=np.float64))
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot Sum empty buffer"):
             rt.go(kernel.sum(buf)).result()

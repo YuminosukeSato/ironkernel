@@ -56,22 +56,22 @@ pub enum Expr {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     /// Comparison producing a boolean (0.0 or 1.0).
     Compare(CmpOp, Box<Expr>, Box<Expr>),
-    /// Conditional select: where(cond, true_val, false_val).
+    /// Conditional select: `where(cond, true_val, false_val)`.
     Select(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
 impl Expr {
-    /// Shorthand to create a boxed Const.
+    /// Shorthand to create a boxed `Const`.
     pub fn constant(val: f64) -> Self {
         Expr::Const(val)
     }
 
-    /// Shorthand to create a boxed ArgRef.
+    /// Shorthand to create a boxed `ArgRef`.
     pub fn arg_ref(index: usize) -> Self {
         Expr::ArgRef(index)
     }
 
-    /// Collect all ArgRef indices referenced in this expression.
+    /// Collect all `ArgRef` indices referenced in this expression.
     pub fn referenced_args(&self) -> Vec<usize> {
         let mut indices = Vec::new();
         self.collect_args(&mut indices);
@@ -97,6 +97,31 @@ impl Expr {
         }
     }
 
+    /// Rewrite `ArgRef` indices using the provided mapping.
+    /// `ArgRef` indices not in the mapping are left unchanged.
+    pub fn rewrite_arg_refs(&self, mapping: &std::collections::HashMap<usize, usize>) -> Expr {
+        match self {
+            Expr::Const(v) => Expr::Const(*v),
+            Expr::ArgRef(i) => Expr::ArgRef(*mapping.get(i).unwrap_or(i)),
+            Expr::Unary(op, inner) => Expr::Unary(*op, Box::new(inner.rewrite_arg_refs(mapping))),
+            Expr::Binary(op, lhs, rhs) => Expr::Binary(
+                *op,
+                Box::new(lhs.rewrite_arg_refs(mapping)),
+                Box::new(rhs.rewrite_arg_refs(mapping)),
+            ),
+            Expr::Compare(op, lhs, rhs) => Expr::Compare(
+                *op,
+                Box::new(lhs.rewrite_arg_refs(mapping)),
+                Box::new(rhs.rewrite_arg_refs(mapping)),
+            ),
+            Expr::Select(cond, t, f) => Expr::Select(
+                Box::new(cond.rewrite_arg_refs(mapping)),
+                Box::new(t.rewrite_arg_refs(mapping)),
+                Box::new(f.rewrite_arg_refs(mapping)),
+            ),
+        }
+    }
+
     /// Count total nodes in the expression tree.
     pub fn node_count(&self) -> usize {
         match self {
@@ -113,13 +138,15 @@ impl Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use std::collections::HashMap;
 
     // --- Leaf nodes ---
 
     #[test]
     fn const_creation() {
-        let e = Expr::constant(3.14);
-        assert_eq!(e, Expr::Const(3.14));
+        let e = Expr::constant(std::f64::consts::PI);
+        assert_eq!(e, Expr::Const(std::f64::consts::PI));
     }
 
     #[test]
@@ -333,6 +360,71 @@ mod tests {
         assert_eq!(e.node_count(), 101);
     }
 
+    // --- rewrite_arg_refs ---
+
+    #[test]
+    fn rewrite_basic() {
+        let expr = Expr::arg_ref(0);
+        let mapping = std::collections::HashMap::from([(0, 2)]);
+        let rewritten = expr.rewrite_arg_refs(&mapping);
+        assert_eq!(rewritten, Expr::ArgRef(2));
+    }
+
+    #[test]
+    fn rewrite_preserves_const() {
+        let expr = Expr::constant(42.0);
+        let mapping = std::collections::HashMap::from([(0, 1)]);
+        let rewritten = expr.rewrite_arg_refs(&mapping);
+        assert_eq!(rewritten, Expr::Const(42.0));
+    }
+
+    #[test]
+    fn rewrite_nested_select() {
+        // where(arg(0) > 0, arg(1), arg(2)) → where(arg(10) > 0, arg(20), arg(30))
+        let cond = Expr::Compare(
+            CmpOp::Gt,
+            Box::new(Expr::arg_ref(0)),
+            Box::new(Expr::constant(0.0)),
+        );
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::arg_ref(1)),
+            Box::new(Expr::arg_ref(2)),
+        );
+        let mapping = std::collections::HashMap::from([(0, 10), (1, 20), (2, 30)]);
+        let rewritten = expr.rewrite_arg_refs(&mapping);
+
+        let expected_cond = Expr::Compare(
+            CmpOp::Gt,
+            Box::new(Expr::arg_ref(10)),
+            Box::new(Expr::constant(0.0)),
+        );
+        let expected = Expr::Select(
+            Box::new(expected_cond),
+            Box::new(Expr::arg_ref(20)),
+            Box::new(Expr::arg_ref(30)),
+        );
+        assert_eq!(rewritten, expected);
+    }
+
+    #[test]
+    fn rewrite_unmapped_passthrough() {
+        let expr = Expr::Binary(
+            BinaryOp::Add,
+            Box::new(Expr::arg_ref(0)),
+            Box::new(Expr::arg_ref(5)),
+        );
+        let mapping = std::collections::HashMap::from([(0, 1)]);
+        let rewritten = expr.rewrite_arg_refs(&mapping);
+        // arg(0) → arg(1), arg(5) unchanged
+        let expected = Expr::Binary(
+            BinaryOp::Add,
+            Box::new(Expr::arg_ref(1)),
+            Box::new(Expr::arg_ref(5)),
+        );
+        assert_eq!(rewritten, expected);
+    }
+
     // --- Clone ---
 
     #[test]
@@ -344,5 +436,59 @@ mod tests {
         );
         let e2 = e.clone();
         assert_eq!(e, e2);
+    }
+
+    // --- proptest: rewrite_arg_refs ---
+
+    fn arb_expr(max_depth: u32) -> impl Strategy<Value = Expr> {
+        let leaf = prop_oneof![
+            any::<f64>().prop_map(Expr::Const),
+            (0usize..10).prop_map(Expr::ArgRef),
+        ];
+        leaf.prop_recursive(max_depth, 64, 3, |inner| {
+            prop_oneof![
+                inner
+                    .clone()
+                    .prop_map(|e| Expr::Unary(UnaryOp::Neg, Box::new(e))),
+                (inner.clone(), inner.clone()).prop_map(|(l, r)| Expr::Binary(
+                    BinaryOp::Add,
+                    Box::new(l),
+                    Box::new(r)
+                )),
+                (inner.clone(), inner.clone()).prop_map(|(l, r)| Expr::Compare(
+                    CmpOp::Gt,
+                    Box::new(l),
+                    Box::new(r)
+                )),
+                (inner.clone(), inner.clone(), inner).prop_map(|(c, t, f)| Expr::Select(
+                    Box::new(c),
+                    Box::new(t),
+                    Box::new(f)
+                )),
+            ]
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn rewrite_preserves_tree_structure(expr in arb_expr(4)) {
+            let mapping = HashMap::new(); // identity mapping
+            let rewritten = expr.rewrite_arg_refs(&mapping);
+            prop_assert_eq!(rewritten.node_count(), expr.node_count());
+        }
+
+        #[test]
+        fn referenced_args_subset_of_rewritten(expr in arb_expr(4)) {
+            // After rewriting all args to 0, referenced_args should be [0] or empty
+            let refs = expr.referenced_args();
+            let mapping: HashMap<usize, usize> = refs.iter().map(|&i| (i, 0)).collect();
+            let rewritten = expr.rewrite_arg_refs(&mapping);
+            let new_refs = rewritten.referenced_args();
+            if refs.is_empty() {
+                prop_assert!(new_refs.is_empty());
+            } else {
+                prop_assert_eq!(new_refs, vec![0]);
+            }
+        }
     }
 }

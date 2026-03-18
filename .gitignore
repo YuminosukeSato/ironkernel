@@ -11,6 +11,8 @@ dist/
 build/
 *.so
 *.dylib
+.coverage
+coverage*.xml
 
 # IDE
 .idea/

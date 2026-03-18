@@ -1,6 +1,7 @@
-"""parsec: A Python parallel compute library backed by a Rust execution engine."""
+from __future__ import annotations
 
-from parsec._parsec import (
+from ironkernel._facade import KernelFacade, RuntimeFacade
+from ironkernel._ironkernel import (
     Buffer,
     Channel,
     Expr,
@@ -10,19 +11,12 @@ from parsec._parsec import (
     ReduceSpec,
     TaskHandle,
     __version__,
-    _KernelModule,
-    _RuntimeModule,
 )
-from parsec._parsec import (
+from ironkernel._ironkernel import (
     py_select as select,
 )
 
-# Singleton module instances
-kernel = _KernelModule()
-rt = _RuntimeModule()
-
 __all__ = [
-    "__version__",
     "Buffer",
     "Channel",
     "Expr",
@@ -31,7 +25,15 @@ __all__ = [
     "RecvCase",
     "ReduceSpec",
     "TaskHandle",
+    "__version__",
+    "chan",
     "kernel",
     "rt",
     "select",
 ]
+
+kernel: KernelFacade
+rt: RuntimeFacade
+
+
+def chan(capacity: int) -> Channel: ...

@@ -1,6 +1,6 @@
 # Python DSL Layer Rules
 
-python/parsec/ is the user-facing DSL interface.
+python/ironkernel/ is the user-facing DSL interface.
 
 ## __init__.py
 - Re-export from _parsec (Rust binary) only

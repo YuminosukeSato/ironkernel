@@ -1,4 +1,4 @@
-# parsec
+# ironkernel
 
 Two-layer architecture: Rust (execution engine) + Python (PyO3 DSL)
 
@@ -16,7 +16,7 @@ Two-layer architecture: Rust (execution engine) + Python (PyO3 DSL)
 
 ## Lint
 - Rust: `cargo clippy -- -D warnings && cargo fmt --check`
-- Python: `uv run ruff check python/ tests/ && uv run mypy python/parsec/ --strict`
+- Python: `uv run ruff check python/ tests/ && uv run mypy python/ironkernel/ --strict`
 
 ## NEVER
 - Change Rust Edition 2021
@@ -51,9 +51,9 @@ Examples:
 
 ## Plan Workflow
 In Plan mode, output plans to z-ai/ and ensure quality via 3-stage pipeline:
-1. parsec-planner: Requirements analysis -> generate z-ai/plan.md
-2. parsec-architect: Design review -> revise z-ai/plan.md (architecture consistency)
-3. parsec-e2e (Mode A): E2E test plan -> append test details to z-ai/plan.md
+1. ironkernel-planner: Requirements analysis -> generate z-ai/plan.md
+2. ironkernel-architect: Design review -> revise z-ai/plan.md (architecture consistency)
+3. ironkernel-e2e (Mode A): E2E test plan -> append test details to z-ai/plan.md
 z-ai/ is gitignored. Proceed to implementation only after plan approval.
 YOU MUST: Execute all 3 stages sequentially in Plan mode. No skipping.
 

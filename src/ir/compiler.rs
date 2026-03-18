@@ -1,9 +1,17 @@
-use rayon::prelude::*;
+use std::sync::OnceLock;
 
 use crate::buffer::inner::Buffer;
-use crate::error::{ParsecError, ParsecResult};
-use crate::ir::expr::{BinaryOp, CmpOp, Expr, UnaryOp};
+use crate::error::ParsecResult;
+use crate::ir::cache::CompileCache;
+use crate::ir::expr::Expr;
+use crate::ir::flat::FlatExpr;
 use crate::ir::kernel::ReduceOp;
+
+static GLOBAL_CACHE: OnceLock<CompileCache> = OnceLock::new();
+
+fn global_cache() -> &'static CompileCache {
+    GLOBAL_CACHE.get_or_init(CompileCache::new)
+}
 
 /// Scalar value: either f64 or a buffer arg reference.
 #[derive(Debug, Clone)]
@@ -12,40 +20,42 @@ pub enum ArgValue {
     Buffer(Buffer),
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum CompiledProgram {
+    Flat(FlatExpr),
+    LazyTree(Expr),
+}
+
+pub(crate) fn compile_program(expr: &Expr) -> CompiledProgram {
+    if contains_select(expr) {
+        CompiledProgram::LazyTree(expr.clone())
+    } else {
+        CompiledProgram::Flat(crate::ir::flat::compile(expr))
+    }
+}
+
 /// Evaluate an elementwise expression over input arguments, producing a new Buffer.
 ///
-/// Each element of the output is computed by walking the Expr tree with the
-/// corresponding element values from the input arrays.
+/// Compilation results are cached by expression structure via [`CompileCache`].
+/// Expressions without `Select` use the flat interpreter.
+/// Expressions with `Select` use a lazy tree evaluator so dead branches are not evaluated.
 pub fn eval_elementwise(expr: &Expr, args: &[ArgValue]) -> ParsecResult<Buffer> {
-    let len = infer_output_len(args)?;
-
-    if len == 0 {
-        return Ok(Buffer::empty_f64());
+    let program = global_cache().get_or_compile(expr);
+    match program.as_ref() {
+        CompiledProgram::Flat(flat) => crate::ir::flat::eval_flat_elementwise(flat, args),
+        CompiledProgram::LazyTree(tree) => crate::ir::evaluator::eval_lazy_elementwise(tree, args),
     }
+}
 
-    // Extract f64 slices for buffer args, scalars as-is
-    let arg_slices: Vec<Option<&[f64]>> = args
-        .iter()
-        .map(|a| match a {
-            ArgValue::Scalar(_) => None,
-            ArgValue::Buffer(b) => Some(b.as_f64_slice()),
-        })
-        .collect();
-
-    const PAR_THRESHOLD: usize = 4096;
-
-    let result: Vec<f64> = if len >= PAR_THRESHOLD {
-        (0..len)
-            .into_par_iter()
-            .map(|i| eval_expr_at(expr, i, &arg_slices, args))
-            .collect()
-    } else {
-        (0..len)
-            .map(|i| eval_expr_at(expr, i, &arg_slices, args))
-            .collect()
-    };
-
-    Ok(Buffer::from_f64_vec(result))
+fn contains_select(expr: &Expr) -> bool {
+    match expr {
+        Expr::Const(_) | Expr::ArgRef(_) => false,
+        Expr::Unary(_, inner) => contains_select(inner),
+        Expr::Binary(_, lhs, rhs) | Expr::Compare(_, lhs, rhs) => {
+            contains_select(lhs) || contains_select(rhs)
+        }
+        Expr::Select(_, _, _) => true,
+    }
 }
 
 /// Evaluate a reduce operation over a buffer.
@@ -89,113 +99,12 @@ pub fn eval_reduce(op: ReduceOp, buf: &Buffer) -> ParsecResult<f64> {
     }
 }
 
-/// Determine output length from arguments.
-/// All buffer args must have the same length. Scalar-only → error.
-fn infer_output_len(args: &[ArgValue]) -> ParsecResult<usize> {
-    let mut len: Option<usize> = None;
-    for arg in args {
-        if let ArgValue::Buffer(b) = arg {
-            match len {
-                None => len = Some(b.len()),
-                Some(l) if l != b.len() => {
-                    return Err(ParsecError::ShapeError(format!(
-                        "buffer length mismatch: {l} vs {}",
-                        b.len()
-                    )));
-                }
-                Some(_) => {}
-            }
-        }
-    }
-    len.ok_or_else(|| ParsecError::ArgError("no buffer arguments provided".into()))
-}
-
-/// Evaluate expression at element index `i`.
-#[inline]
-fn eval_expr_at(expr: &Expr, i: usize, slices: &[Option<&[f64]>], args: &[ArgValue]) -> f64 {
-    match expr {
-        Expr::Const(v) => *v,
-        Expr::ArgRef(idx) => match &args[*idx] {
-            ArgValue::Scalar(v) => *v,
-            ArgValue::Buffer(_) => slices[*idx].unwrap()[i],
-        },
-        Expr::Unary(op, inner) => {
-            let v = eval_expr_at(inner, i, slices, args);
-            eval_unary(*op, v)
-        }
-        Expr::Binary(op, lhs, rhs) => {
-            let l = eval_expr_at(lhs, i, slices, args);
-            let r = eval_expr_at(rhs, i, slices, args);
-            eval_binary(*op, l, r)
-        }
-        Expr::Compare(op, lhs, rhs) => {
-            let l = eval_expr_at(lhs, i, slices, args);
-            let r = eval_expr_at(rhs, i, slices, args);
-            if eval_cmp(*op, l, r) {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        Expr::Select(cond, t, f) => {
-            let c = eval_expr_at(cond, i, slices, args);
-            if c != 0.0 {
-                eval_expr_at(t, i, slices, args)
-            } else {
-                eval_expr_at(f, i, slices, args)
-            }
-        }
-    }
-}
-
-#[inline]
-fn eval_unary(op: UnaryOp, v: f64) -> f64 {
-    match op {
-        UnaryOp::Neg => -v,
-        UnaryOp::Abs => v.abs(),
-        UnaryOp::Sqrt => v.sqrt(),
-        UnaryOp::Log => v.ln(),
-        UnaryOp::Exp => v.exp(),
-        UnaryOp::Log2 => v.log2(),
-        UnaryOp::Log10 => v.log10(),
-        UnaryOp::Floor => v.floor(),
-        UnaryOp::Ceil => v.ceil(),
-        UnaryOp::Round => v.round(),
-        UnaryOp::Sin => v.sin(),
-        UnaryOp::Cos => v.cos(),
-        UnaryOp::Tan => v.tan(),
-    }
-}
-
-#[inline]
-fn eval_binary(op: BinaryOp, l: f64, r: f64) -> f64 {
-    match op {
-        BinaryOp::Add => l + r,
-        BinaryOp::Sub => l - r,
-        BinaryOp::Mul => l * r,
-        BinaryOp::Div => l / r,
-        BinaryOp::Pow => l.powf(r),
-        BinaryOp::Atan2 => l.atan2(r),
-        BinaryOp::Min => l.min(r),
-        BinaryOp::Max => l.max(r),
-    }
-}
-
-#[inline]
-fn eval_cmp(op: CmpOp, l: f64, r: f64) -> bool {
-    match op {
-        CmpOp::Gt => l > r,
-        CmpOp::Ge => l >= r,
-        CmpOp::Lt => l < r,
-        CmpOp::Le => l <= r,
-        CmpOp::Eq => l == r,
-        CmpOp::Ne => l != r,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ParsecError;
+    use crate::ir::expr::{BinaryOp, CmpOp, UnaryOp};
+    use proptest::strategy::Strategy;
 
     fn buf(data: Vec<f64>) -> ArgValue {
         ArgValue::Buffer(Buffer::from_f64_vec(data))
@@ -357,6 +266,90 @@ mod tests {
         assert_eq!(result.as_f64_slice(), &[0.0, 0.0, 0.0, 1.0, 2.0]);
     }
 
+    #[test]
+    fn select_lazy_does_not_evaluate_false_branch() {
+        let x = Expr::ArgRef(0);
+        let cond = Expr::Compare(CmpOp::Gt, Box::new(x.clone()), Box::new(Expr::Const(0.0)));
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::Unary(UnaryOp::Sqrt, Box::new(x))),
+            Box::new(Expr::Const(0.0)),
+        );
+        let args = vec![buf(vec![-1.0, -4.0])];
+
+        let result = eval_elementwise(&expr, &args).unwrap();
+
+        assert_eq!(result.as_f64_slice(), &[0.0, 0.0]);
+    }
+
+    #[test]
+    fn select_nan_in_unselected_branch_no_contamination() {
+        let cond = Expr::ArgRef(0);
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::ArgRef(1)),
+            Box::new(Expr::ArgRef(2)),
+        );
+        let args = vec![
+            buf(vec![1.0, 1.0]),
+            buf(vec![5.0, 6.0]),
+            buf(vec![f64::NAN, f64::NAN]),
+        ];
+
+        let result = eval_elementwise(&expr, &args).unwrap();
+
+        assert_eq!(result.as_f64_slice(), &[5.0, 6.0]);
+    }
+
+    #[test]
+    fn select_mixed_elements_lazy() {
+        let cond = Expr::ArgRef(0);
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::ArgRef(1)),
+            Box::new(Expr::ArgRef(2)),
+        );
+        let args = vec![
+            buf(vec![1.0, 0.0, 1.0, 0.0]),
+            buf(vec![10.0, 20.0, 30.0, 40.0]),
+            buf(vec![100.0, 200.0, 300.0, 400.0]),
+        ];
+
+        let result = eval_elementwise(&expr, &args).unwrap();
+
+        assert_eq!(result.as_f64_slice(), &[10.0, 200.0, 30.0, 400.0]);
+    }
+
+    #[test]
+    fn select_empty_buffer() {
+        let cond = Expr::ArgRef(0);
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::Const(1.0)),
+            Box::new(Expr::Const(0.0)),
+        );
+        let args = vec![buf(vec![])];
+
+        let result = eval_elementwise(&expr, &args).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn select_single_element() {
+        let cond = Expr::ArgRef(0);
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::Const(7.0)),
+            Box::new(Expr::Const(9.0)),
+        );
+        let args = vec![buf(vec![0.0])];
+
+        let result = eval_elementwise(&expr, &args).unwrap();
+
+        assert_eq!(result.as_f64_slice(), &[9.0]);
+    }
+
     // --- Reduce ---
 
     #[test]
@@ -440,6 +433,12 @@ mod tests {
         let b = Buffer::from_f64_vec(vec![f64::NAN, 1.0]);
         // f64::min propagates NaN
         assert!(eval_reduce(ReduceOp::Min, &b).unwrap().is_nan());
+    }
+
+    #[test]
+    fn reduce_max_with_nan() {
+        let b = Buffer::from_f64_vec(vec![f64::NAN, 1.0]);
+        assert!(eval_reduce(ReduceOp::Max, &b).unwrap().is_nan());
     }
 
     #[test]
@@ -535,6 +534,34 @@ mod tests {
         assert_eq!(result.as_f64_slice(), &[1.0, 2.0, 2.0, -1.0, -2.0, -2.0]);
     }
 
+    // --- Select (where): proptest ---
+
+    #[test]
+    fn select_all_true() {
+        let cond = Expr::ArgRef(0);
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::Const(7.0)),
+            Box::new(Expr::Const(9.0)),
+        );
+        let args = vec![buf(vec![1.0, 2.0, 3.0])];
+        let result = eval_elementwise(&expr, &args).unwrap();
+        assert_eq!(result.as_f64_slice(), &[7.0, 7.0, 7.0]);
+    }
+
+    #[test]
+    fn select_all_false() {
+        let cond = Expr::ArgRef(0);
+        let expr = Expr::Select(
+            Box::new(cond),
+            Box::new(Expr::Const(7.0)),
+            Box::new(Expr::Const(9.0)),
+        );
+        let args = vec![buf(vec![0.0, 0.0, 0.0])];
+        let result = eval_elementwise(&expr, &args).unwrap();
+        assert_eq!(result.as_f64_slice(), &[9.0, 9.0, 9.0]);
+    }
+
     #[test]
     fn math_abs() {
         let expr = Expr::Unary(UnaryOp::Abs, Box::new(Expr::ArgRef(0)));
@@ -559,5 +586,104 @@ mod tests {
         let result = eval_elementwise(&expr, &args).unwrap();
         let expected = 4.0_f64.sqrt() + 4.0_f64.sin();
         assert!((result.as_f64_slice()[0] - expected).abs() < 1e-10);
+    }
+
+    // --- compile_program dispatch ---
+
+    #[test]
+    fn compile_program_flat_for_non_select() {
+        let expr = Expr::Binary(
+            BinaryOp::Add,
+            Box::new(Expr::ArgRef(0)),
+            Box::new(Expr::Const(1.0)),
+        );
+        assert!(matches!(compile_program(&expr), CompiledProgram::Flat(_)));
+    }
+
+    #[test]
+    fn compile_program_lazy_for_select() {
+        let expr = Expr::Select(
+            Box::new(Expr::ArgRef(0)),
+            Box::new(Expr::Const(1.0)),
+            Box::new(Expr::Const(0.0)),
+        );
+        assert!(matches!(
+            compile_program(&expr),
+            CompiledProgram::LazyTree(_)
+        ));
+    }
+
+    #[test]
+    fn compile_program_lazy_for_nested_select() {
+        let expr = Expr::Binary(
+            BinaryOp::Add,
+            Box::new(Expr::Select(
+                Box::new(Expr::ArgRef(0)),
+                Box::new(Expr::ArgRef(1)),
+                Box::new(Expr::Const(0.0)),
+            )),
+            Box::new(Expr::Const(1.0)),
+        );
+        assert!(matches!(
+            compile_program(&expr),
+            CompiledProgram::LazyTree(_)
+        ));
+    }
+
+    // --- proptest ---
+
+    proptest::prop_compose! {
+        fn same_length_vec_pair_strategy(max_len: usize)
+            (len in 1usize..=max_len)
+            (
+                left in proptest::collection::vec(-1.0e6f64..1.0e6f64, len),
+                right in proptest::collection::vec(-1.0e6f64..1.0e6f64, len),
+            ) -> (Vec<f64>, Vec<f64>) {
+                (left, right)
+            }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn where_selects_correct_branch(
+            (cond_data, true_data, false_data) in proptest::collection::vec(0.0f64..=1.0f64, 1..=64usize).prop_flat_map(|cond: Vec<f64>| {
+                let len = cond.len();
+                (
+                    proptest::strategy::Just(cond),
+                    proptest::collection::vec(-1.0e6f64..1.0e6f64, len),
+                    proptest::collection::vec(-1.0e6f64..1.0e6f64, len),
+                )
+            }),
+        ) {
+            let cond_bools: Vec<f64> = cond_data.iter().map(|&v| if v > 0.5 { 1.0 } else { 0.0 }).collect();
+            let expr = Expr::Select(
+                Box::new(Expr::ArgRef(0)),
+                Box::new(Expr::ArgRef(1)),
+                Box::new(Expr::ArgRef(2)),
+            );
+            let result = eval_elementwise(&expr, &[buf(cond_bools.clone()), buf(true_data.clone()), buf(false_data.clone())]).unwrap();
+            let out = result.as_f64_slice();
+            for i in 0..cond_bools.len() {
+                let expected = if cond_bools[i] != 0.0 { true_data[i] } else { false_data[i] };
+                proptest::prop_assert!(
+                    (out[i] - expected).abs() < 1e-10,
+                    "index={i}, cond={}, expected={expected}, got={}",
+                    cond_bools[i], out[i]
+                );
+            }
+        }
+
+        #[test]
+        fn where_with_identical_branches_returns_original_values(
+            (cond, values) in same_length_vec_pair_strategy(64),
+        ) {
+            let expr = Expr::Select(
+                Box::new(Expr::ArgRef(0)),
+                Box::new(Expr::ArgRef(1)),
+                Box::new(Expr::ArgRef(1)),
+            );
+            let result = eval_elementwise(&expr, &[buf(cond), buf(values.clone())]).unwrap();
+            proptest::prop_assert_eq!(result.as_f64_slice(), values.as_slice());
+        }
     }
 }
