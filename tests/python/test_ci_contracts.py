@@ -36,3 +36,4 @@ def test_release_workflow_pins_linux_interpreters_why_manylinux_builds_must_targ
     assert "-i python3.9 python3.10 python3.11 python3.12 python3.13" in workflow
     assert 'manylinux: "2014"' in workflow
     assert "- os: ubuntu-latest\n            target: aarch64" not in workflow
+    assert "- os: macos-13" not in workflow
