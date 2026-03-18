@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
-import subprocess
-import sysconfig
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,23 +42,18 @@ def test_rust_entrypoints_bind_to_project_virtualenv_why_numpy_backed_rust_tests
     assert "coverage-rust.json" in coverage
 
 
-def test_rust_entrypoint_wrapper_exports_venv_site_packages_why_embedded_numpy_requires_project_site_packages() -> None:
-    expected_python = ROOT / ".venv" / "bin" / "python"
-    env_output = subprocess.run(
-        ["bash", "scripts/with_venv_python.sh", "env"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    exported = dict(line.split("=", 1) for line in env_output.splitlines() if "=" in line)
+def test_rust_entrypoint_wrapper_is_passthrough_why_pyo3_uses_build_time_python() -> None:
+    """with_venv_python.sh must be a thin passthrough (exec "$@").
 
-    assert exported["PYO3_PYTHON"] == str(expected_python)
-    assert exported["PYTHON_SYS_EXECUTABLE"] == str(expected_python)
-    assert exported["VIRTUAL_ENV"] == str(ROOT / ".venv")
-    assert exported["PATH"].split(os.pathsep)[0] == str(ROOT / ".venv" / "bin")
-    # PYTHONPATH must NOT be set — it causes numpy source-directory import errors on CI.
-    assert "PYTHONPATH" not in exported
+    PyO3 links against the Python detected at cargo build time, so
+    env-var overrides like PYO3_PYTHON do not change the interpreter
+    at test runtime.  CI installs numpy via pip into the system Python.
+    """
+    wrapper = read("scripts/with_venv_python.sh")
+
+    assert 'exec "$@"' in wrapper
+    # Must NOT set PYTHONPATH — it causes numpy source-directory import errors.
+    assert "PYTHONPATH" not in wrapper or "unset PYTHONPATH" in wrapper
 
 
 def test_release_workflow_pins_linux_interpreters_why_manylinux_builds_must_target_supported_versions() -> None:
