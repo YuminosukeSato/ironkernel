@@ -60,7 +60,8 @@ def test_rust_entrypoint_wrapper_exports_venv_site_packages_why_embedded_numpy_r
     assert exported["PYTHON_SYS_EXECUTABLE"] == str(expected_python)
     assert exported["VIRTUAL_ENV"] == str(ROOT / ".venv")
     assert exported["PATH"].split(os.pathsep)[0] == str(ROOT / ".venv" / "bin")
-    assert sysconfig.get_path("purelib") in exported["PYTHONPATH"].split(os.pathsep)
+    # PYTHONPATH must NOT be set — it causes numpy source-directory import errors on CI.
+    assert "PYTHONPATH" not in exported
 
 
 def test_release_workflow_pins_linux_interpreters_why_manylinux_builds_must_target_supported_versions() -> None:

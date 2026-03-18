@@ -28,6 +28,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - run: pip install numpy
       - run: make lint
       - run: make test
       - run: make typecheck
@@ -96,6 +97,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - run: pip install numpy
       - run: cargo install cargo-llvm-cov --locked
       - run: make coverage-rust
       - uses: actions/upload-artifact@v4
@@ -122,6 +124,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - run: pip install numpy
       - run: make stress STRESS_ITERATIONS=200
 
   mutation:
@@ -141,5 +144,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - run: pip install numpy
       - run: cargo install cargo-mutants --locked
       - run: make mutate-core
