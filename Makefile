@@ -1,7 +1,15 @@
-.PHONY: all lint lint-rust lint-python fmt fmt-rust fmt-python \
-	test test-rust test-python typecheck build dev clean
+SHELL := /bin/bash
 
-all: lint test typecheck
+STRESS_ITERATIONS ?= 200
+
+.PHONY: all sync lint lint-rust lint-python fmt fmt-rust fmt-python \
+	test test-rust test-python typecheck build dev dev-frozen \
+	coverage-python coverage-rust stress mutate-core verify-all clean
+
+all: verify-all
+
+sync:
+	uv sync --frozen --dev
 
 lint: lint-rust lint-python
 
@@ -9,7 +17,7 @@ lint-rust:
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
 
-lint-python:
+lint-python: sync
 	uv run ruff check python/ tests/
 	uv run ruff format --check python/ tests/
 
@@ -25,12 +33,12 @@ fmt-python:
 test: test-rust test-python
 
 test-rust:
-	cargo test
+	cargo test --workspace
 
-test-python: dev
+test-python: dev-frozen
 	uv run pytest tests/python/ -v
 
-typecheck: dev
+typecheck: dev-frozen
 	uv run mypy python/ironkernel/ --strict
 
 build:
@@ -39,6 +47,25 @@ build:
 dev:
 	uv run maturin develop
 
+dev-frozen: sync
+	uv run maturin develop
+
+coverage-python: dev-frozen
+	COVERAGE_FILE=.coverage-python uv run coverage run -m pytest tests/python/ -q
+	COVERAGE_FILE=.coverage-python uv run coverage report -m
+	COVERAGE_FILE=.coverage-python uv run coverage xml -o coverage-python.xml
+
+coverage-rust: sync
+	bash scripts/run_rust_coverage.sh
+
+stress: dev-frozen
+	bash scripts/stress.sh $(STRESS_ITERATIONS)
+
+mutate-core:
+	bash scripts/run_mutants.sh
+
+verify-all: lint test typecheck coverage-python coverage-rust
+
 clean:
 	cargo clean
-	rm -rf dist/ build/ *.egg-info/
+	rm -rf dist/ build/ *.egg-info/ coverage-python.xml coverage-rust.xml coverage-rust.json coverage-rust.txt

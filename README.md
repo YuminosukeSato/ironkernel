@@ -35,7 +35,8 @@ Build from source:
 ```bash
 git clone https://github.com/YuminosukeSato/ironkernel.git
 cd ironkernel
-uv sync && uv run maturin develop
+uv sync --frozen --dev
+uv run maturin develop
 ```
 
 ---
@@ -158,9 +159,26 @@ buf = rt.asarray(np.arange(1_000_000, dtype=np.float64))
 c = chan(10)
 task = rt.go(kernel.map(double, x=buf), out=c)
 result = c.recv()   # blocks until delivery completes
-assert task.is_done()
+task.result()       # wait for terminal completion if you need it
 print(result.numpy()[:5])  # [0. 2. 4. 6. 8.]
 ```
+
+`Channel.recv()` returning means the buffer was delivered. It does not guarantee that `TaskHandle.is_done()` has already become visible in the same instant. If you need terminal completion, call `task.result()`.
+
+## Quality Gates
+
+```bash
+make verify-all
+make coverage-python
+make coverage-rust
+make stress
+make mutate-core
+```
+
+- `coverage-python` enforces 100% statement and branch coverage for `python/ironkernel/`.
+- `coverage-rust` instruments both Rust tests and Python execution paths, then fails on any uncovered `src/` line except PyO3 `#[pymethods]` annotation lines that LLVM reports as uncovered.
+- `stress` repeats the concurrency-sensitive Rust and Python suites to catch flakes.
+- `mutate-core` compile-checks mutation candidates against `src/runtime/`, `src/channel/`, and `src/python/`.
 
 ---
 

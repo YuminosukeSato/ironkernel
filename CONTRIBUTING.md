@@ -6,7 +6,7 @@ Thank you for your interest in contributing to ironkernel.
 
 ### Prerequisites
 
-- Rust 1.70+
+- Rust 1.93.1 (pinned in `rust-toolchain.toml`)
 - Python 3.9+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 
@@ -15,14 +15,14 @@ Thank you for your interest in contributing to ironkernel.
 ```bash
 git clone https://github.com/YuminosukeSato/ironkernel.git
 cd ironkernel
-uv sync
+uv sync --frozen --dev
 uv run maturin develop
 ```
 
 ### Verify
 
 ```bash
-cargo test && uv run maturin develop && uv run pytest tests/python/ -v
+make verify-all
 ```
 
 ## Architecture Rules
@@ -123,16 +123,12 @@ Run: `uv run maturin develop && uv run pytest tests/python/ -v`
 Before submitting a PR, run all checks:
 
 ```bash
-# Rust
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
-
-# Python
-uv run maturin develop
-uv run pytest tests/python/ -v
-uv run ruff check python/ tests/
-uv run mypy python/ironkernel/ --strict
+make lint
+make test
+make typecheck
+make coverage-python
+make coverage-rust
+make stress
 ```
 
 ## Commit Convention
@@ -198,6 +194,14 @@ BREAKING CHANGE: Expr::Var renamed to Expr::ArgRef
 - One logical change per commit
 - The message explains WHY, not WHAT (the diff shows what)
 - Tests included in the same commit as the feature/fix they cover
+
+## Coverage and Stress
+
+- `make coverage-python` is a hard gate: 100% statement and branch coverage is required for `python/ironkernel/`.
+- `make coverage-rust` instruments both `cargo test` and the Python runtime path, then fails if any `src/` line is uncovered.
+- LLVM reports PyO3 `#[pymethods]` annotation lines as uncovered even when the generated wrappers execute. The Rust coverage gate treats only those annotation lines as tool false positives.
+- `make stress` repeats the flaky-prone Rust and Python concurrency suites 200 times by default.
+- `make mutate-core` compile-checks mutation candidates for the core runtime, channel, and Python boundary modules.
 
 ## Pull Requests
 

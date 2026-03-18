@@ -59,3 +59,13 @@ python_version = "3.9"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.coverage.run]
+branch = true
+source = ["ironkernel"]
+omit = ["python/ironkernel/_ironkernel.pyi"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = false

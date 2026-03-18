@@ -1,6 +1,5 @@
 # Rust
 target/
-Cargo.lock
 
 # Python
 __pycache__/
@@ -12,7 +11,13 @@ build/
 *.so
 *.dylib
 .coverage
+.coverage-python
 coverage*.xml
+coverage*.json
+coverage*.txt
+*.profraw
+mutants.out/
+mutants.out.old/
 
 # IDE
 .idea/

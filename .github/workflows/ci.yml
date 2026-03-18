@@ -13,40 +13,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint-rust:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-
-  lint-python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.10"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --dev
-      - run: uv run ruff check python/ tests/
-      - run: uv run ruff format --check python/ tests/
+      - run: make lint
+      - run: make test
+      - run: make typecheck
 
-  test-rust:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test
-
-  test-python:
+  test-python-matrix:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,9 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.1
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: test-python
+          shared-key: test-python-matrix
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -65,40 +53,87 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --dev
+      - run: uv sync --frozen --dev
       - run: uv run maturin develop
       - run: uv run pytest tests/python/ -v
 
-  coverage:
+  coverage-python:
     runs-on: ubuntu-latest
-    env:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage-python
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: make coverage-python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-python
+          path: coverage-python.xml
+
+  coverage-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.1
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: coverage
+          shared-key: coverage-rust
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.10"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: cargo install cargo-llvm-cov --locked
-      - run: uv sync --dev
-      - run: cargo llvm-cov --workspace --cobertura --output-path coverage-rust.xml
-      - run: uv run maturin develop
-      - run: uv run coverage run --source=ironkernel -m pytest tests/python/ -v
-      - run: uv run coverage xml -o coverage-python.xml
-      - name: Upload coverage to Codecov
-        if: ${{ env.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v5
+      - run: make coverage-rust
+      - uses: actions/upload-artifact@v4
         with:
-          disable_search: true
-          fail_ci_if_error: true
-          files: ./coverage-rust.xml,./coverage-python.xml
-          token: ${{ secrets.CODECOV_TOKEN }}
-          verbose: true
+          name: coverage-rust
+          path: |
+            coverage-rust.xml
+            coverage-rust.json
+            coverage-rust.txt
+
+  stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stress
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: make stress STRESS_ITERATIONS=200
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: mutation
+      - run: cargo install cargo-mutants --locked
+      - run: make mutate-core
