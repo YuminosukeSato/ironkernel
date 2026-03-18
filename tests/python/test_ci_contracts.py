@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sysconfig
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +31,24 @@ def test_rust_entrypoints_bind_to_project_virtualenv_why_numpy_backed_rust_tests
     assert 'export PYO3_PYTHON="${VENV_PYTHON}"' in coverage
     assert 'export PYTHON_SYS_EXECUTABLE="${VENV_PYTHON}"' in coverage
     assert "coverage-rust.json" in coverage
+
+
+def test_rust_entrypoint_wrapper_exports_venv_site_packages_why_embedded_numpy_requires_project_site_packages() -> None:
+    expected_python = ROOT / ".venv" / "bin" / "python"
+    env_output = subprocess.run(
+        ["bash", "scripts/with_venv_python.sh", "env"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    exported = dict(line.split("=", 1) for line in env_output.splitlines() if "=" in line)
+
+    assert exported["PYO3_PYTHON"] == str(expected_python)
+    assert exported["PYTHON_SYS_EXECUTABLE"] == str(expected_python)
+    assert exported["VIRTUAL_ENV"] == str(ROOT / ".venv")
+    assert exported["PATH"].split(os.pathsep)[0] == str(ROOT / ".venv" / "bin")
+    assert sysconfig.get_path("purelib") in exported["PYTHONPATH"].split(os.pathsep)
 
 
 def test_release_workflow_pins_linux_interpreters_why_manylinux_builds_must_target_supported_versions() -> None:
