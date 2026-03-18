@@ -29,3 +29,4 @@ build/
 docs/
 z-ai/
 .DS_Store
+.claude/
