@@ -302,10 +302,7 @@ mod tests {
             let received = ch.inner.recv().unwrap();
             assert_eq!(received.as_f64_slice(), &[10.0, 20.0]);
 
-            // Task should be completed.
-            assert!(task.inner.is_done());
-
-            // task.result() returns the staged buffer.
+            // task.result() waits for completion and returns the staged buffer.
             let result = task.inner.result().unwrap();
             assert_eq!(result.as_buffer().unwrap().as_f64_slice(), &[10.0, 20.0]);
         });

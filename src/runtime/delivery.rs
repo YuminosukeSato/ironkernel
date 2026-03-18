@@ -233,21 +233,15 @@ mod tests {
             buffer: buf,
         });
 
-        for _ in 0..50 {
-            if task.is_done() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
+        let result = task.result().unwrap();
 
         assert!(task.is_done());
         let received = ch
             .try_recv()
             .unwrap()
             .expect("delivery should enqueue buffer");
-        let result = task.result().unwrap();
+        assert_eq!(result.as_buffer().unwrap().as_f64_slice(), &[13.0, 21.0]);
 
         assert_eq!(received.as_f64_slice(), &[13.0, 21.0]);
-        assert_eq!(result.as_buffer().unwrap().as_f64_slice(), &[13.0, 21.0]);
     }
 }
