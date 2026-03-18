@@ -9,15 +9,14 @@ Two-layer architecture: Rust (execution engine) + Python (PyO3 DSL)
 - Modules: ir/, buffer/, runtime/, channel/ (pyo3-free) + python/ (PyO3 boundary)
 
 ## Build & Test
-- `source .venv/bin/activate`
 - Rust: `cargo test`
-- Python: `maturin develop && pytest tests/python/ -v`
-- All: `cargo test && maturin develop && pytest tests/python/ -v`
-- Release: `maturin develop --release`
+- Python: `uv run maturin develop && uv run pytest tests/python/ -v`
+- All: `cargo test && uv run maturin develop && uv run pytest tests/python/ -v`
+- Release: `uv run maturin develop --release`
 
 ## Lint
 - Rust: `cargo clippy -- -D warnings && cargo fmt --check`
-- Python: `ruff check python/ tests/ && mypy python/parsec/ --strict`
+- Python: `uv run ruff check python/ tests/ && uv run mypy python/parsec/ --strict`
 
 ## NEVER
 - Change Rust Edition 2021
@@ -48,7 +47,7 @@ Examples:
 ## Dependencies (knowledge cutoff reference)
 - pyo3 = "0.23", numpy = "0.23", rayon = "1.10", crossbeam-channel = "0.5"
 - Dev: proptest = "1.5"
-- Python: maturin build system, Python 3.9+
+- Python: uv + maturin build system, Python 3.9+
 
 ## Plan Workflow
 In Plan mode, output plans to z-ai/ and ensure quality via 3-stage pipeline:
