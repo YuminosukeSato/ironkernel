@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 
 pub mod buffer;
 pub mod error;
+pub mod ir;
 
 /// parsec: A Python parallel compute library backed by a Rust execution engine.
 #[pymodule]
