@@ -1,0 +1,25 @@
+[package]
+name = "parsec"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "A Python parallel compute library backed by a Rust execution engine"
+license = "MIT"
+
+[lib]
+name = "_parsec"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
+rayon = "1.10"
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+proptest = "1.5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
