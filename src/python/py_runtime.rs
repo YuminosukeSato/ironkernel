@@ -906,4 +906,76 @@ mod tests {
             assert_eq!(received.as_f64_slice(), &[1.0, 3.0, 9.0]);
         });
     }
+
+    #[test]
+    fn mutation_guard_reject_callable_args_for_spec_both_conditions_must_hold_why_specs_must_reject_any_extra_arguments(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let empty_args = PyTuple::empty(py);
+            let nonempty_args = PyTuple::new(py, [1_i64]).unwrap();
+            let some_kwargs = PyDict::new(py);
+            some_kwargs.set_item("key", 1_i64).unwrap();
+
+            // Both empty → Ok.
+            assert!(reject_callable_args_for_spec(&empty_args, None).is_ok());
+
+            // Non-empty args alone → Err.
+            assert!(reject_callable_args_for_spec(&nonempty_args, None).is_err());
+
+            // Empty args but Some kwargs → Err.
+            assert!(reject_callable_args_for_spec(&empty_args, Some(&some_kwargs)).is_err());
+
+            // Both present → Err.
+            assert!(reject_callable_args_for_spec(&nonempty_args, Some(&some_kwargs)).is_err());
+        });
+    }
+
+    #[test]
+    fn mutation_guard_finalize_callable_outcome_applies_failed_to_pending_task_why_error_messages_must_reach_waiters(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let task = CallableTask::new();
+            assert!(!task.is_done());
+
+            finalize_callable_outcome(
+                &task,
+                None,
+                CallableOutcome::Failed("mutation check".to_string()),
+            );
+
+            assert!(task.is_done());
+            let err = task.result(py).unwrap_err();
+            assert!(err.to_string().contains("mutation check"));
+        });
+    }
+
+    #[test]
+    fn mutation_guard_finalize_callable_outcome_completes_ready_task_why_callable_results_must_be_stored(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let task = CallableTask::new();
+            let value = 42_i64.into_pyobject(py).unwrap().unbind().into_any();
+
+            finalize_callable_outcome(
+                &task,
+                None,
+                CallableOutcome::Ready {
+                    value,
+                    delivery_buffer: None,
+                },
+            );
+
+            assert!(task.is_done());
+            assert_eq!(
+                task.result(py).unwrap().bind(py).extract::<i64>().unwrap(),
+                42
+            );
+        });
+    }
 }
