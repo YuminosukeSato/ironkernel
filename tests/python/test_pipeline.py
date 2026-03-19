@@ -12,9 +12,7 @@ def test_callable_pipeline_between_channels_why_out_channel_results_must_feed_fo
     stage_two = chan(3)
 
     upstream = [rt.go(lambda value=value: float(value), out=stage_one) for value in (1, 2, 3)]
-    downstream = [
-        rt.go(lambda value: value * 10.0, stage_one.recv().scalar(), out=stage_two) for _ in range(3)
-    ]
+    downstream = [rt.go(lambda value: value * 10.0, stage_one.recv().scalar(), out=stage_two) for _ in range(3)]
 
     assert sorted(stage_two.recv().scalar() for _ in range(3)) == [10.0, 20.0, 30.0]
     assert sorted(task.result() for task in upstream) == [1.0, 2.0, 3.0]
@@ -109,13 +107,9 @@ def test_three_stage_pipeline_why_multi_hop_channel_chains_must_preserve_data_in
 
     stage1_tasks = [rt.go(lambda v=v: float(v), out=ch1) for v in range(5)]
 
-    stage2_tasks = [
-        rt.go(lambda x: x * 2.0, ch1.recv().scalar(), out=ch2) for _ in range(5)
-    ]
+    stage2_tasks = [rt.go(lambda x: x * 2.0, ch1.recv().scalar(), out=ch2) for _ in range(5)]
 
-    stage3_tasks = [
-        rt.go(lambda x: x + 100.0, ch2.recv().scalar(), out=ch3) for _ in range(5)
-    ]
+    stage3_tasks = [rt.go(lambda x: x + 100.0, ch2.recv().scalar(), out=ch3) for _ in range(5)]
 
     results = sorted(ch3.recv().scalar() for _ in range(5))
     assert results == [100.0, 102.0, 104.0, 106.0, 108.0]

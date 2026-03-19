@@ -8,8 +8,9 @@ import pytest
 from ironkernel import chan, kernel, rt
 
 
-def test_go_callable_lambda_with_args_and_kwargs_returns_python_value_why_runtime_should_accept_plain_python_submit(
-) -> None:
+def test_go_callable_lambda_with_args_and_kwargs_returns_python_value_why_runtime_should_accept_plain_python_submit() -> (
+    None
+):
     task = rt.go(lambda x, y=0, scale=1: (x + y) * scale, 3, y=4, scale=2)
 
     assert task.result() == 14
@@ -36,8 +37,7 @@ def test_go_callable_with_channel_scalar_delivers_buffer_and_keeps_python_result
     assert task.result() == 7.0
 
 
-def test_go_callable_with_channel_numpy_delivers_buffer_and_keeps_numpy_result_why_array_outputs_must_bridge(
-) -> None:
+def test_go_callable_with_channel_numpy_delivers_buffer_and_keeps_numpy_result_why_array_outputs_must_bridge() -> None:
     output = chan(1)
 
     task = rt.go(
