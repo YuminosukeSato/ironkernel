@@ -8,9 +8,7 @@ import pytest
 from ironkernel import chan, kernel, rt
 
 
-def test_go_callable_lambda_with_args_and_kwargs_returns_python_value_why_runtime_should_accept_plain_python_submit() -> (
-    None
-):
+def test_go_callable_with_args_kwargs_why_runtime_accepts_plain_python_submit() -> None:
     task = rt.go(lambda x, y=0, scale=1: (x + y) * scale, 3, y=4, scale=2)
 
     assert task.result() == 14
