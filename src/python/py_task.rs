@@ -1,20 +1,93 @@
 use pyo3::prelude::*;
 
 use crate::error::ParsecError;
+#[cfg(test)]
+use crate::error::ParsecResult;
 use crate::runtime::task::{TaskHandle, TaskResult};
 
 use super::py_buffer::PyBuffer;
+use super::py_callable::CallableTask;
+
+#[derive(Clone)]
+pub(crate) enum TaskInner {
+    Native(TaskHandle),
+    Callable(CallableTask),
+}
+
+#[cfg(test)]
+impl TaskInner {
+    pub(crate) fn is_done(&self) -> bool {
+        match self {
+            Self::Native(handle) => handle.is_done(),
+            Self::Callable(handle) => handle.is_done(),
+        }
+    }
+
+    pub(crate) fn result(&self) -> ParsecResult<TaskResult> {
+        match self {
+            Self::Native(handle) => handle.result(),
+            Self::Callable(_) => Err(ParsecError::Internal(
+                "callable task result requires Python object access".into(),
+            )),
+        }
+    }
+}
 
 /// Python-visible task handle.
 #[pyclass(name = "TaskHandle")]
 #[derive(Clone)]
 pub struct PyTaskHandle {
-    pub(crate) inner: TaskHandle,
+    pub(crate) inner: TaskInner,
 }
 
 impl PyTaskHandle {
     pub fn new(inner: TaskHandle) -> Self {
-        PyTaskHandle { inner }
+        PyTaskHandle {
+            inner: TaskInner::Native(inner),
+        }
+    }
+
+    pub(crate) fn from_callable(inner: CallableTask) -> Self {
+        PyTaskHandle {
+            inner: TaskInner::Callable(inner),
+        }
+    }
+
+    pub(crate) fn result_object(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match &self.inner {
+            TaskInner::Native(handle) => {
+                let task_result = py
+                    .allow_threads(|| handle.result())
+                    .map_err(parsec_err_to_py)?;
+                match task_result {
+                    TaskResult::Buffer(buf) => {
+                        Ok(PyBuffer::new(buf).into_pyobject(py)?.into_any().unbind())
+                    }
+                    TaskResult::Scalar(v) => {
+                        use crate::buffer::inner::Buffer;
+                        Ok(PyBuffer::new(Buffer::from_f64_vec(vec![v]))
+                            .into_pyobject(py)?
+                            .into_any()
+                            .unbind())
+                    }
+                }
+            }
+            TaskInner::Callable(handle) => handle.result(py),
+        }
+    }
+
+    pub(crate) fn done(&self) -> bool {
+        match &self.inner {
+            TaskInner::Native(handle) => handle.is_done(),
+            TaskInner::Callable(handle) => handle.is_done(),
+        }
+    }
+
+    pub(crate) fn cancel_inner(&self) -> bool {
+        match &self.inner {
+            TaskInner::Native(handle) => handle.cancel(),
+            TaskInner::Callable(handle) => handle.cancel(),
+        }
     }
 }
 
@@ -37,37 +110,32 @@ fn parsec_err_to_py(e: ParsecError) -> PyErr {
 #[pymethods]
 impl PyTaskHandle {
     /// Block until completion and return result.
-    fn result(&self, py: Python<'_>) -> PyResult<PyBuffer> {
-        let task_result = py
-            .allow_threads(|| self.inner.result())
-            .map_err(parsec_err_to_py)?;
-        match task_result {
-            TaskResult::Buffer(buf) => Ok(PyBuffer::new(buf)),
-            TaskResult::Scalar(v) => {
-                use crate::buffer::inner::Buffer;
-                Ok(PyBuffer::new(Buffer::from_f64_vec(vec![v])))
-            }
-        }
+    fn result(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.result_object(py)
     }
 
     /// Check if the task is complete.
     fn is_done(&self) -> bool {
-        self.inner.is_done()
+        self.done()
     }
 
     /// Cancel the task.
     fn cancel(&self) -> bool {
-        self.inner.cancel()
+        self.cancel_inner()
     }
 
     fn __repr__(&self) -> String {
-        format!("TaskHandle(state={:?})", self.inner.state())
+        match &self.inner {
+            TaskInner::Native(handle) => format!("TaskHandle(state={:?})", handle.state()),
+            TaskInner::Callable(handle) => format!("TaskHandle(state={})", handle.state_label()),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::python::py_callable::CallableTask;
     use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 
     #[test]
@@ -107,6 +175,7 @@ mod tests {
             handle.complete(TaskResult::Scalar(49.5));
 
             let result = PyTaskHandle::new(handle).result(py).unwrap();
+            let result = result.extract::<PyBuffer>(py).unwrap();
 
             assert_eq!(result.inner.as_f64_slice(), &[49.5]);
             assert_eq!(result.inner.len(), 1);
@@ -123,7 +192,42 @@ mod tests {
             handle.complete(TaskResult::Buffer(buf));
 
             let result = PyTaskHandle::new(handle).result(py).unwrap();
+            let result = result.extract::<PyBuffer>(py).unwrap();
             assert_eq!(result.inner.as_f64_slice(), &[1.0, 2.0, 3.0]);
+        });
+    }
+
+    #[test]
+    fn task_result_returns_python_object_for_callable_why_callable_go_must_not_force_buffer_wrapping(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let callable = CallableTask::new();
+            let value = "callable".into_pyobject(py).unwrap().unbind().into_any();
+            callable.complete(value);
+
+            let result = PyTaskHandle::from_callable(callable).result(py).unwrap();
+
+            assert_eq!(result.bind(py).extract::<String>().unwrap(), "callable");
+        });
+    }
+
+    #[test]
+    fn task_result_maps_callable_failure_to_runtime_error_why_python_callable_exceptions_must_reach_callers(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let callable = CallableTask::new();
+            callable.fail("callable boom".to_string());
+
+            let err = PyTaskHandle::from_callable(callable)
+                .result(py)
+                .unwrap_err();
+
+            assert!(err.is_instance_of::<PyRuntimeError>(py));
+            assert!(err.to_string().contains("callable boom"));
         });
     }
 
@@ -194,5 +298,29 @@ mod tests {
         let py_handle = PyTaskHandle::new(handle);
         let cloned = py_handle.clone();
         assert!(!cloned.is_done());
+    }
+
+    #[test]
+    fn pytaskhandle_clone_shares_callable_state_why_python_task_aliases_must_observe_same_completion(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let callable = CallableTask::new();
+            let py_handle = PyTaskHandle::from_callable(callable.clone());
+            let cloned = py_handle.clone();
+            let value = 11_i64.into_pyobject(py).unwrap().unbind().into_any();
+            callable.complete(value);
+
+            assert_eq!(
+                cloned
+                    .result(py)
+                    .unwrap()
+                    .bind(py)
+                    .extract::<i64>()
+                    .unwrap(),
+                11
+            );
+        });
     }
 }

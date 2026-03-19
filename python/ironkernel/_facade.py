@@ -112,8 +112,14 @@ class RuntimeFacade:
     def asarray(self, array: Any) -> Buffer:
         return self._backend.asarray(array)
 
-    def go(self, spec: MapSpec | ReduceSpec, out: Channel | None = None) -> TaskHandle:
-        return self._backend.go(spec, out=out)
+    def go(
+        self,
+        spec: MapSpec | ReduceSpec | Any,
+        *args: Any,
+        out: Channel | None = None,
+        **kwargs: Any,
+    ) -> TaskHandle:
+        return self._backend.go(spec, *args, out=out, **kwargs)
 
     def chan(self, capacity: int) -> Channel:
         return self._backend.chan(capacity)

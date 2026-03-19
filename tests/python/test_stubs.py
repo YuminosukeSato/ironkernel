@@ -39,7 +39,7 @@ def test_stub_signatures_match_runtime_why_public_stub_contracts_must_reflect_ca
     assert tuple(chan_signature.parameters) == ("capacity",)
 
     go_signature = inspect.signature(ironkernel.rt.go)
-    assert tuple(go_signature.parameters) == ("spec", "out")
+    assert tuple(go_signature.parameters) == ("spec", "args", "out", "kwargs")
     assert go_signature.parameters["out"].default is None
 
     where_signature = inspect.signature(ironkernel.kernel.where)
