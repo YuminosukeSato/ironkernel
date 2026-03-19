@@ -246,6 +246,42 @@ mod tests {
     }
 
     #[test]
+    fn is_done_completed_why_completed_callable_must_report_terminal() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let task = CallableTask::new();
+            assert!(!task.is_done());
+            let value = 1_i64.into_pyobject(py).unwrap().unbind().into_any();
+            task.complete(value);
+            assert!(task.is_done());
+        });
+    }
+
+    #[test]
+    fn is_done_failed_why_failed_callable_must_report_terminal() {
+        let task = CallableTask::new();
+        assert!(!task.is_done());
+        task.fail("oops".to_string());
+        assert!(task.is_done());
+    }
+
+    #[test]
+    fn is_done_cancelled_why_cancelled_callable_must_report_terminal() {
+        let task = CallableTask::new();
+        assert!(!task.is_done());
+        task.cancel();
+        assert!(task.is_done());
+    }
+
+    #[test]
+    fn cancel_from_failed_returns_false_why_terminal_callable_tasks_must_not_reopen() {
+        let task = CallableTask::new();
+        task.fail("already failed".to_string());
+        assert!(!task.cancel());
+    }
+
+    #[test]
     fn concurrent_complete_keeps_first_result_why_only_one_terminal_transition_may_win() {
         pyo3::prepare_freethreaded_python();
 
