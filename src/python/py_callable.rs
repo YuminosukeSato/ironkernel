@@ -20,6 +20,21 @@ impl CallableState {
     }
 }
 
+fn py_result_from_state(state: &CallableState, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    match state {
+        CallableState::Completed(value) => Ok(value.clone_ref(py)),
+        CallableState::Failed(message) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            message.clone(),
+        )),
+        CallableState::Cancelled => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "task cancelled",
+        )),
+        CallableState::Pending => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "callable task unexpectedly remained pending",
+        )),
+    }
+}
+
 impl CallableTask {
     pub(crate) fn new() -> Self {
         Self {
@@ -81,16 +96,7 @@ impl CallableTask {
         });
 
         let state = self.inner.0.lock().unwrap();
-        match &*state {
-            CallableState::Completed(value) => Ok(value.clone_ref(py)),
-            CallableState::Failed(message) => Err(
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(message.clone()),
-            ),
-            CallableState::Cancelled => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "task cancelled",
-            )),
-            CallableState::Pending => unreachable!(),
-        }
+        py_result_from_state(&state, py)
     }
 }
 
@@ -160,6 +166,25 @@ mod tests {
             task.complete(value);
 
             assert!(!task.cancel());
+        });
+    }
+
+    #[test]
+    fn fail_after_completion_keeps_success_value_why_late_failures_must_not_override_terminal_success(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let task = CallableTask::new();
+            let value = 7_i64.into_pyobject(py).unwrap().unbind().into_any();
+
+            task.complete(value);
+            task.fail("too late".to_string());
+
+            assert_eq!(
+                task.result(py).unwrap().bind(py).extract::<i64>().unwrap(),
+                7
+            );
         });
     }
 
@@ -279,6 +304,56 @@ mod tests {
         let task = CallableTask::new();
         task.fail("already failed".to_string());
         assert!(!task.cancel());
+    }
+
+    #[test]
+    fn fail_on_completed_is_noop_why_terminal_state_must_reject_late_failures() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let task = CallableTask::new();
+            let value = "ok".into_pyobject(py).unwrap().unbind().into_any();
+            task.complete(value);
+
+            // Must not panic or change state.
+            task.fail("late failure".to_string());
+            assert_eq!(task.state_label(), "Completed");
+        });
+    }
+
+    #[test]
+    fn state_label_tracks_each_observable_state_why_debug_surfaces_must_match_callable_progress() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let pending = CallableTask::new();
+            assert_eq!(pending.state_label(), "Pending");
+
+            let completed = CallableTask::new();
+            completed.complete(1_i64.into_pyobject(py).unwrap().unbind().into_any());
+            assert_eq!(completed.state_label(), "Completed");
+
+            let failed = CallableTask::new();
+            failed.fail("boom".to_string());
+            assert_eq!(failed.state_label(), "Failed");
+
+            let cancelled = CallableTask::new();
+            assert!(cancelled.cancel());
+            assert_eq!(cancelled.state_label(), "Cancelled");
+        });
+    }
+
+    #[test]
+    fn pending_state_result_conversion_fails_loudly_why_broken_wait_invariants_must_surface_as_runtime_errors(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let err = py_result_from_state(&CallableState::Pending, py).unwrap_err();
+
+            assert!(err.is_instance_of::<PyRuntimeError>(py));
+            assert!(err.to_string().contains("pending"));
+        });
     }
 
     #[test]

@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 use crate::buffer::inner::Buffer;
+use crate::channel::bounded::Channel;
 use crate::runtime::delivery::{submit_delivery, DeliveryJob};
 use crate::runtime::task::{TaskHandle, TaskResult};
 
@@ -40,6 +41,84 @@ fn reject_callable_args_for_spec(
     Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
         "go() only accepts *args and **kwargs for Python callables",
     ))
+}
+
+enum CallableOutcome {
+    Cancelled,
+    Ready {
+        value: Py<PyAny>,
+        delivery_buffer: Option<Buffer>,
+    },
+    Failed(String),
+}
+
+fn execute_callable_outcome(
+    background: &CallableTask,
+    callable: &Py<PyAny>,
+    call_args: &Py<PyTuple>,
+    call_kwargs: Option<&Py<PyDict>>,
+    wants_delivery: bool,
+) -> CallableOutcome {
+    Python::with_gil(|py| {
+        if background.is_done() {
+            return CallableOutcome::Cancelled;
+        }
+
+        let kwargs = call_kwargs.map(|value| value.bind(py));
+        let value = match callable.bind(py).call(call_args.bind(py), kwargs) {
+            Ok(value) => value,
+            Err(err) => return CallableOutcome::Failed(err.to_string()),
+        };
+
+        if background.is_done() {
+            return CallableOutcome::Cancelled;
+        }
+
+        let delivery_buffer = if wants_delivery {
+            match try_convert_to_buffer(value.as_any()) {
+                Ok(buffer) => Some(buffer),
+                Err(err) => return CallableOutcome::Failed(err.to_string()),
+            }
+        } else {
+            None
+        };
+
+        CallableOutcome::Ready {
+            value: value.unbind(),
+            delivery_buffer,
+        }
+    })
+}
+
+fn finalize_callable_outcome(
+    background: &CallableTask,
+    out_channel: Option<Channel>,
+    outcome: CallableOutcome,
+) {
+    match outcome {
+        CallableOutcome::Cancelled => {}
+        CallableOutcome::Failed(message) => {
+            if !background.is_done() {
+                background.fail(message);
+            }
+        }
+        CallableOutcome::Ready {
+            value,
+            delivery_buffer,
+        } => {
+            if background.is_done() {
+                return;
+            }
+            if let Some(channel) = out_channel {
+                match channel.send(delivery_buffer.expect("buffer required for delivery")) {
+                    Ok(()) => background.complete(value),
+                    Err(err) => background.fail(err.to_string()),
+                }
+            } else {
+                background.complete(value);
+            }
+        }
+    }
 }
 
 /// The runtime module exposed to Python.
@@ -123,15 +202,6 @@ impl PyRuntimeModule {
 
             Ok(PyTaskHandle::new(handle))
         } else if spec.is_callable() {
-            enum CallableOutcome {
-                Cancelled,
-                Ready {
-                    value: Py<PyAny>,
-                    delivery_buffer: Option<Buffer>,
-                },
-                Failed(String),
-            }
-
             let handle = CallableTask::new();
             let background = handle.clone();
             let callable = spec.clone().unbind();
@@ -144,62 +214,14 @@ impl PyRuntimeModule {
                     return;
                 }
 
-                let outcome = Python::with_gil(|py| {
-                    if background.is_done() {
-                        return CallableOutcome::Cancelled;
-                    }
-
-                    let kwargs = call_kwargs.as_ref().map(|value| value.bind(py));
-                    let value = match callable.bind(py).call(call_args.bind(py), kwargs) {
-                        Ok(value) => value,
-                        Err(err) => return CallableOutcome::Failed(err.to_string()),
-                    };
-
-                    if background.is_done() {
-                        return CallableOutcome::Cancelled;
-                    }
-
-                    let delivery_buffer = if wants_delivery {
-                        match try_convert_to_buffer(value.as_any()) {
-                            Ok(buffer) => Some(buffer),
-                            Err(err) => return CallableOutcome::Failed(err.to_string()),
-                        }
-                    } else {
-                        None
-                    };
-
-                    CallableOutcome::Ready {
-                        value: value.unbind(),
-                        delivery_buffer,
-                    }
-                });
-
-                match outcome {
-                    CallableOutcome::Cancelled => {}
-                    CallableOutcome::Failed(message) => {
-                        if !background.is_done() {
-                            background.fail(message);
-                        }
-                    }
-                    CallableOutcome::Ready {
-                        value,
-                        delivery_buffer,
-                    } => {
-                        if background.is_done() {
-                            return;
-                        }
-                        if let Some(channel) = out_channel {
-                            match channel
-                                .send(delivery_buffer.expect("buffer required for delivery"))
-                            {
-                                Ok(()) => background.complete(value),
-                                Err(err) => background.fail(err.to_string()),
-                            }
-                        } else {
-                            background.complete(value);
-                        }
-                    }
-                }
+                let outcome = execute_callable_outcome(
+                    &background,
+                    &callable,
+                    &call_args,
+                    call_kwargs.as_ref(),
+                    wants_delivery,
+                );
+                finalize_callable_outcome(&background, out_channel, outcome);
             });
 
             Ok(PyTaskHandle::from_callable(handle))
@@ -221,6 +243,8 @@ mod tests {
     use super::*;
     use pyo3::exceptions::{PyRuntimeError, PyTypeError};
     use std::ffi::CString;
+    use std::thread;
+    use std::time::Duration;
 
     fn empty_args<'py>(py: Python<'py>) -> Bound<'py, PyTuple> {
         PyTuple::empty(py)
@@ -229,6 +253,10 @@ mod tests {
     fn eval_callable<'py>(py: Python<'py>, source: &str) -> Bound<'py, PyAny> {
         let source = CString::new(source).unwrap();
         py.eval(source.as_c_str(), None, None).unwrap()
+    }
+
+    fn unbound_callable_and_empty_args(source: &str) -> (Py<PyAny>, Py<PyTuple>) {
+        Python::with_gil(|py| (eval_callable(py, source).unbind(), empty_args(py).unbind()))
     }
 
     #[test]
@@ -710,6 +738,110 @@ mod tests {
 
             assert!(err.is_instance_of::<PyRuntimeError>(py));
             assert!(err.to_string().contains("buffer-convertible"));
+        });
+    }
+
+    #[test]
+    fn execute_callable_outcome_returns_cancelled_before_python_call_when_task_was_already_cancelled_why_gil_handoff_races_must_not_run_user_code(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        let task = CallableTask::new();
+        let (callable, args) = unbound_callable_and_empty_args("lambda: 1");
+
+        assert!(task.cancel());
+        assert!(matches!(
+            execute_callable_outcome(&task, &callable, &args, None, false),
+            CallableOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn execute_callable_outcome_returns_cancelled_after_python_call_when_cancellation_wins_mid_execution_why_completed_python_work_must_not_override_task_state(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        let task = CallableTask::new();
+        let background = task.clone();
+        let (callable, args) =
+            unbound_callable_and_empty_args("lambda: (__import__('time').sleep(0.05), 1)[1]");
+        let join = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            assert!(background.cancel());
+        });
+
+        assert!(matches!(
+            execute_callable_outcome(&task, &callable, &args, None, false),
+            CallableOutcome::Cancelled
+        ));
+        join.join().unwrap();
+    }
+
+    #[test]
+    fn finalize_callable_outcome_keeps_cancelled_task_terminal_why_cancelled_outcomes_must_not_reopen_waiters(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        let task = CallableTask::new();
+        assert!(task.cancel());
+
+        finalize_callable_outcome(&task, None, CallableOutcome::Cancelled);
+
+        Python::with_gil(|py| {
+            let err = task.result(py).unwrap_err();
+            assert!(err.is_instance_of::<PyRuntimeError>(py));
+            assert!(err.to_string().contains("cancelled"));
+        });
+    }
+
+    #[test]
+    fn finalize_callable_outcome_skips_ready_value_when_task_was_cancelled_why_delivery_must_not_revive_cancelled_tasks(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        let task = CallableTask::new();
+        assert!(task.cancel());
+        let value = Python::with_gil(|py| 5_i64.into_pyobject(py).unwrap().unbind().into_any());
+
+        finalize_callable_outcome(
+            &task,
+            None,
+            CallableOutcome::Ready {
+                value,
+                delivery_buffer: None,
+            },
+        );
+
+        Python::with_gil(|py| {
+            let err = task.result(py).unwrap_err();
+            assert!(err.is_instance_of::<PyRuntimeError>(py));
+            assert!(err.to_string().contains("cancelled"));
+        });
+    }
+
+    #[test]
+    fn finalize_callable_outcome_fails_when_out_channel_is_closed_why_delivery_errors_must_reach_waiters(
+    ) {
+        pyo3::prepare_freethreaded_python();
+
+        let task = CallableTask::new();
+        let channel = crate::channel::bounded::Channel::new(1);
+        let value = Python::with_gil(|py| 9_i64.into_pyobject(py).unwrap().unbind().into_any());
+        channel.close();
+
+        finalize_callable_outcome(
+            &task,
+            Some(channel),
+            CallableOutcome::Ready {
+                value,
+                delivery_buffer: Some(Buffer::from_f64_vec(vec![9.0])),
+            },
+        );
+
+        Python::with_gil(|py| {
+            let err = task.result(py).unwrap_err();
+            assert!(err.is_instance_of::<PyRuntimeError>(py));
+            assert!(err.to_string().contains("ChannelClosed"));
         });
     }
 

@@ -301,6 +301,28 @@ mod tests {
     }
 
     #[test]
+    fn task_inner_callable_result_requires_python_access_why_test_only_rust_bridge_must_not_fake_python_objects(
+    ) {
+        let inner = TaskInner::Callable(CallableTask::new());
+
+        assert_eq!(
+            inner.result().unwrap_err(),
+            ParsecError::Internal("callable task result requires Python object access".into())
+        );
+    }
+
+    #[test]
+    fn task_inner_callable_is_done_tracks_terminal_state_why_test_only_rust_bridge_must_match_callable_handles(
+    ) {
+        let callable = CallableTask::new();
+        let inner = TaskInner::Callable(callable.clone());
+
+        assert!(!inner.is_done());
+        assert!(callable.cancel());
+        assert!(inner.is_done());
+    }
+
+    #[test]
     fn pytaskhandle_clone_shares_callable_state_why_python_task_aliases_must_observe_same_completion(
     ) {
         pyo3::prepare_freethreaded_python();
@@ -322,5 +344,16 @@ mod tests {
                 11
             );
         });
+    }
+
+    #[test]
+    fn pytaskhandle_repr_for_callable_uses_callable_state_label_why_debug_output_must_distinguish_python_task_path(
+    ) {
+        let callable = CallableTask::new();
+        let py_handle = PyTaskHandle::from_callable(callable.clone());
+
+        assert!(py_handle.__repr__().contains("Pending"));
+        assert!(callable.cancel());
+        assert!(py_handle.__repr__().contains("Cancelled"));
     }
 }
